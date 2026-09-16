@@ -42,7 +42,7 @@ const TE = [
 ];
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
-const byCompany = (rows: { company: string }[], c: string) => rows.find((r) => r.company === c)!;
+const byCompany = <T extends { company: string }>(rows: T[], c: string) => rows.find((r) => r.company === c)!;
 
 test("premium computed and rounded", () => {
   const [r] = normalizePreStocks(PS);
