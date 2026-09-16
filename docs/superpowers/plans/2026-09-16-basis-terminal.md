@@ -578,7 +578,7 @@ Requires Task 0 complete.
 
 - [ ] **Step 1: Full test run**
 
-Run: `node --test "lib/**/*.test.ts" "app/**/*.test.ts" && npm run build`
+Run: `node --test && npm run build`
 Expected: all green, build succeeds.
 
 - [ ] **Step 2: Deploy**

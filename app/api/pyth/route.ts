@@ -159,17 +159,22 @@ export async function GET() {
     const parsed = await latest(wanted.flatMap((w) => [w.underId, w.tokenId]));
     const pairs = buildPairs(wanted, parsed, Math.floor(Date.now() / 1000));
 
+    // ponytail: an empty `pairs` never gets a 200. Two real paths reach here
+    // with nothing: no symbol resolved at all (so `latest` never even fetched),
+    // and Hermes answering with ids that line up with no pair. Both used to
+    // return 200, which the UI renders as a clean empty table -- a dead
+    // upstream indistinguishable from a quiet market. Fail loud instead.
     if (pairs.length === 0) {
-      console.error(
-        `[/api/pyth] every pair dropped: ${wanted.length} wanted, ${parsed.length} price updates returned`,
-      );
+      const msg = `Pyth returned no usable pairs: ${wanted.length} requested, ${parsed.length} price updates back`;
+      console.error(`[/api/pyth] ${msg}`);
+      return fail({ pairs: [], unresolved, error: msg }, 502);
     }
 
     return NextResponse.json<Body>({
       pairs,
-      // True only when Hermes actually handed back price updates. `pairs` can
-      // still be empty below this if both legs failed to line up, which is why
-      // the two are reported separately rather than inferred from each other.
+      // True only when Hermes actually handed back price updates. Reported
+      // separately from `pairs.length` so "upstream answered but the legs did
+      // not line up" stays distinguishable from "upstream is dead".
       sources: { pyth: parsed.length > 0 },
       unresolved,
       fetchedAt: new Date().toISOString(),
