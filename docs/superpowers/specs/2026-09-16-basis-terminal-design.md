@@ -164,3 +164,60 @@ nothing for a UI task to accidentally wire up.
 - Task 6's swap panel takes its mint from `mintFor(sym)`, never from a symbol
   lookup, and the T6 honesty guard extends to assert that no component resolves
   a mint by symbol search.
+
+---
+
+## Amendment 2, 2026-09-16: Pyth is gated; keyless path is primary
+
+### Public Hermes closed on 2026-08-26
+
+Pyth's own docs banner: "Hermes now requires an API Key." Verified directly:
+`/v2/price_feeds` metadata still returns 200 (which is why feed enumeration
+worked and gave no warning), but `/v2/updates/price/latest` returns 401 with no
+auth and 403 `Not entitled` with an unrecognised key. Same on hermes-beta,
+benchmarks, the legacy `/api/latest_price_feeds`, and the SSE stream.
+
+### The free trial covers 3 equities and zero tokenized feeds
+
+A Pyth Terminal demo trial grants 25 named feeds for 14 days. Of those, three
+matter here: `Equity.US.TSLA/USD`, `Equity.US.QQQ/USD`, `Equity.US.VOO/USD`,
+all confirmed HTTP 200. **No `Crypto.*X` tokenized feed is included**; all
+return 403. The grant is a per-feed allowlist, not an asset-type rule:
+`Crypto.AAPLX/USD` is asset_type Crypto and still 403s.
+
+VOO is a dead end regardless. VOOx exists (`Xsd7TduT…`) with **$0 liquidity**.
+
+### Decision: keyless primary, Pyth as labeled enhancement
+
+Jupiter (`usdPrice`, keyless) supplies the token leg and Yahoo's chart endpoint
+supplies the underlying, covering all 15 pairs with no key, no quota and no
+expiry. Pyth is layered on top for TSLA and QQQ, where it genuinely powers the
+underlying leg and is labeled as such.
+
+The deciding factor was expiry, not capability: a 14-day trial started
+2026-09-16 lapses around Sep 30, while judging runs through **Oct 2**. Building
+Tier 1 on the trial would have produced a demo that broke *during judging*.
+
+Rotating trial accounts to widen the grant was considered and rejected: the
+demo set appears fixed rather than per-account, so it likely yields nothing, and
+it violates the terms of the very sponsor judging that track.
+
+### First verified live basis
+
+```
+TSLA  underlying  $361.57   (Pyth, expo -5, age 0s)
+TSLAx token       $361.04   (Jupiter usdPrice, $1.24M liquidity)
+basis             -14.6 bps
+```
+
+### Caution: expo is NOT always -8
+
+TSLA's equity feed carries `expo: -5`. An earlier report claimed -8 universally.
+`lib/pairs.ts:71` reads `10 ** e.price.expo` per entry, so the code is correct,
+but hardcoding the exponent would misprice by 1000x. Never assume it.
+
+### Caution: price and conf are strings
+
+`price.price` and `price.conf` are JSON strings (`as_string` serde attribute);
+`expo` and `publish_time` are numbers. Confirmed against the Hermes server
+source.
