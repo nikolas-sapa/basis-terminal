@@ -106,3 +106,61 @@ add a swap button to a Tier 2 row once and confirm red before trusting green.
 3. **Multi-bounty eligibility unconfirmed.** Whether one submission can claim several tracks.
 4. **Fallback.** If the Plugin fights us, drop to a jup.ag deep link. Tier 1 keeps its action,
    we lose in-app swap. Decision point: Thursday morning.
+
+---
+
+## Amendment, 2026-09-16: mint resolution and the liquidity floor
+
+Resolving mints turned up two things that change the product, plus one near-miss.
+
+### The near-miss: symbol search returns scam tokens
+
+Querying Jupiter's token search for the uppercase xStock tickers (`AAPLX`,
+`TSLAX`, `NVDAX`, ...) returned a pump.fun impostor for **every single one**:
+"Apple" at `2PdabVsS...pump` with $2,432 liquidity, plus "Amazonian Coin",
+"Google Employee", "SPY X SPY", "ChainHood", "MacroStrategy". All had
+`organicScore: 0`, none were verified, all had roughly $2-3k of depth.
+
+Wiring any of those into the swap widget would have sent a user's funds to a
+scam token while the UI displayed Apple's real price beside it. This is the
+worst failure this product could ship, and symbol search is what produced it.
+
+**Authentic xStocks use a lowercase `x` suffix** (`AAPLx`) and mints on the `Xs`
+vanity prefix, with liquidity in the hundreds of thousands. Pyth independently
+names its feeds in uppercase (`Crypto.AAPLX/USD`), so symbol case does not
+carry between the two systems and must be mapped explicitly.
+
+Mints now live in `lib/mints.ts`, resolved from Jupiter's verified-tag list
+filtered on both the name suffix and the `Xs` mint prefix. `lib/mints.test.ts`
+guards it: mints must be `Xs`-prefixed, must not contain "pump", tickers must be
+lowercase-`x`, and addresses must be unique. Verified failable by injecting the
+real scam address, which turns two tests red.
+
+### Finding 1: only 21 of 839 xStocks are tradeable
+
+839 xStocks exist. 21 clear $100k of liquidity, 30 clear $10k, and **794 sit
+below $1k**. A swap control on a $200-depth token is not a trade, it is a rug by
+slippage.
+
+`LIQUIDITY_FLOOR_USD = 100_000`. Below it, a row still shows its basis but is
+offered no action. Of the allowlist, 14 of 15 clear the floor; NFLXx at $3,302
+does not and ships read-only. This distinction between "mispriced" and
+"mispriced and actually tradeable" is what separates this from a toy.
+
+### Finding 2: Ondo is not tradeable at all
+
+All 436 Ondo tokenized equities are effectively illiquid on Solana DEXs:
+NVDAon $491, AMDon $945, CRCLon $209, HOODon $0. Pyth carries `Crypto.<SYM>ON`
+feeds, so their basis is worth displaying, but no Ondo row may render a swap
+control. `ONDO_TRADEABLE = false`, and no Ondo mint is recorded, so there is
+nothing for a UI task to accidentally wire up.
+
+### Plan deltas
+
+- Task 2's `PAIRS` keeps no mint data. It imports from `lib/mints.ts` instead.
+- Task 4 renders an action control only when `isTradeable(mint)` is true, and
+  shows the liquidity figure on every row so a user can see the depth behind a
+  quoted basis.
+- Task 6's swap panel takes its mint from `mintFor(sym)`, never from a symbol
+  lookup, and the T6 honesty guard extends to assert that no component resolves
+  a mint by symbol search.
