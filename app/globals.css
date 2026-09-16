@@ -1,17 +1,25 @@
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+  --accent: #006bff;
+  --rich: #d92d20;
+  --cheap: #027a48;
+  --bg: #0a0a0a;
+  --fg: #ededed;
+  --muted: #8a8a8a;
+  --line: #222;
+  font-family: Geist, ui-sans-serif, system-ui, sans-serif;
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  /* --rich and --cheap are tuned for a light surface: against --bg they measure
+     4.1:1 and 3.7:1, both under the 4.5:1 floor for body text. Same semantics,
+     dark-surface legible (7.1:1 and 10.1:1). Red and green only, no orange. */
+  --rich-fg: #ff6166;
+  --cheap-fg: #3fd07f;
+  --surface: #121212;
 }
+/* ponytail: no orange anywhere, per design DNA. rich/cheap are red/green. */
 
 html {
   height: 100%;
+  color-scheme: dark;
 }
 
 html,
@@ -24,9 +32,9 @@ body {
   min-height: 100%;
   display: flex;
   flex-direction: column;
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+  color: var(--fg);
+  background: var(--bg);
+  font-family: var(--font-geist-sans), Geist, ui-sans-serif, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -42,8 +50,7 @@ a {
   text-decoration: none;
 }
 
-@media (prefers-color-scheme: dark) {
-  html {
-    color-scheme: dark;
-  }
+code {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.92em;
 }
