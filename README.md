@@ -30,11 +30,19 @@ Pyth is a labeled enhancement, not a dependency. Public Hermes closed on 2026-08
 
 These exist because the alternative is a product that quietly misleads people about money.
 
-**Verified mints only.** Resolving mints by symbol search returns pump.fun impostors for *every* uppercase xStock ticker. `AAPLX` yields a token literally named "Apple" at `2PdabVsS…pump` with ~$2.4k of liquidity and an organic score of zero. Authentic xStocks use a lowercase `x` suffix and mints on an `Xs` prefix. Mints are matched by address, never by symbol, and guard tests reject any address that isn't `Xs`-prefixed.
+**Verified mints only, matched by address.** Two separate hazards make this mandatory.
 
-**Liquidity floor.** 839 xStocks exist; 21 clear $100k of liquidity and 794 sit under $1k. A swap control on a $200-depth token is a rug by slippage, not a trade. Below the floor a row still shows its basis but is offered no action, and every row displays its depth.
+Searching Jupiter's *unverified* index for the uppercase tickers returns pump.fun impostors for every one: `AAPLX` yields a token literally named "Apple" at `2PdabVsS…pump`, ~$2.4k liquidity, organic score zero.
 
-**Per-token liveness.** Four of eight PreStocks tokens don't actually trade; their premium moves only because the mark moves. Each row is badged accordingly rather than drawn as a live tick.
+Restricting to the verified set removes those, but introduces a subtler problem: **92 symbols are duplicated within it, and three verified tokens answer to some case of "META"** — MetaDAO at $4.53, a token named META at $4,564, and METAx at $673. Picking by symbol there is a coin flip with someone's money.
+
+So mints are resolved by address from a committed allowlist, never by symbol lookup, and guard tests reject any address that isn't `Xs`-prefixed. Authentic xStocks use a lowercase `x` suffix; Pyth names the same assets in uppercase, so case carries no meaning across systems.
+
+**Liquidity floor.** 839 xStocks exist; 21 clear $100k of liquidity and 794 sit under $1k. A swap control on a $200-depth token is a rug by slippage, not a trade. Below the floor a row still shows its basis but is offered no action, and every row displays its depth. The check runs against live liquidity as well as the committed snapshot, so drained depth removes the swap control without a redeploy.
+
+This turns out to be the product's central finding. In a live reading, fourteen of fifteen liquid pairs sat within 34 bps of their underlying, because arbitrage works where it can operate. The one wide basis was NFLX at **-190 bps** — and NFLXx holds $3,197 of liquidity, so it is exactly the row that gets no action. The widest apparent opportunity is the one you cannot take.
+
+**Per-token liveness, with its window disclosed.** An early reading suggested four of the eight PreStocks tokens never trade. Polling properly (15 samples at 20s, plus repeat sessions) showed that was an artifact: *every* token holds a flat plateau for 60-80 seconds, and which ones look frozen depends entirely on how long you watch. So a STATIC badge is a claim about the sampling window, not about the token, and the UI states the window on screen: three polls, 45 seconds apart. A liveness indicator that hides its window is making an unfalsifiable claim.
 
 **Stated provenance.** Neither pre-IPO venue documents where its prices come from. Tessera's own proof-of-reserve publishes asset *counts*, explicitly "not dollar valuations," attested approximately monthly. The UI says so instead of burying it.
 

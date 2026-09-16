@@ -2,14 +2,22 @@ import { bps, verdict } from "./basis.ts";
 import { MINTS, isTradeable, type Mint } from "./mints.ts";
 
 /**
- * Keyless replacement for the Tier 1 price legs.
+ * The Tier 1 price legs.
  *
  * Pyth Hermes stopped serving prices anonymously on 2026-08-26 and our key
  * holds no feed grants, so `/api/pyth` is a 503 by design. This module is the
  * path that works today:
  *
  *   token leg       Jupiter  GET /tokens/v2/tag?query=verified   (keyless)
- *   underlying leg  Yahoo    GET /v8/finance/chart/<SYM>         (keyless)
+ *   underlying leg  Finnhub  GET /api/v1/quote?symbol=<SYM>      (FINNHUB_API_KEY)
+ *   underlying leg  Yahoo    GET /v8/finance/chart/<SYM>         (keyless, FALLBACK)
+ *
+ * Yahoo was the primary underlying source and could not hold the table up:
+ * measured from one IP, 15 concurrent chart requests returned 3 x HTTP 200 and
+ * 12 x HTTP 429 and then locked the IP out for minutes, and the v7 batch
+ * endpoint 429s outright. It is kept as the fallback for when Finnhub is
+ * unconfigured or down, because a degraded source beats no source; it is no
+ * longer asked to serve all 15 symbols.
  *
  * Everything here is pure. All IO lives in `app/api/basis/route.ts`, which is
  * what makes the matching and mapping rules below testable without a network.
@@ -19,12 +27,14 @@ import { MINTS, isTradeable, type Mint } from "./mints.ts";
 export const QUOTE_STALE_SEC = 900;
 
 /**
- * Seconds after which a cached underlying is labelled `yahoo:cached`.
+ * Seconds after which a cached underlying is labelled `<provider>:cached`.
  *
- * Yahoo hard-throttles: a burst of 15 concurrent chart requests measured
- * 3 x HTTP 200 and 12 x HTTP 429, followed by roughly six minutes of lockout.
- * The route therefore serves a memoised quote between refreshes, and this is
- * the age at which the row stops claiming to be a fresh read.
+ * Neither underlying source is polled on every UI poll: Finnhub's free tier is
+ * 60 requests/minute and Yahoo hard-throttles (3 x 200, 12 x 429 on a burst of
+ * 15, then minutes of lockout). The route therefore serves a memoised quote
+ * between refreshes, and this is the age at which a row stops claiming to be a
+ * fresh read. It sits above the route's Finnhub refresh interval, so a healthy
+ * Finnhub leg never labels itself cached.
  */
 export const UNDER_FRESH_SEC = 60;
 
@@ -40,19 +50,49 @@ export type JupToken = {
   isVerified: boolean;
 };
 
-/** One underlying equity quote, parsed out of a Yahoo chart response. */
+/** Which upstream an underlying quote came from. Carried on every row. */
+export type UnderSource = "finnhub" | "yahoo";
+
+/** One underlying equity quote, normalised across the two sources. */
 export type UnderQuote = {
   sym: string;
   px: number;
+  /** ISO currency when the payload states one. Finnhub's /quote does not. */
   currency: string | null;
-  /** `meta.regularMarketTime`: when the print happened, not when we fetched. */
+  /** When the print happened, not when we fetched. Null when unstated. */
   quotedAt: number | null;
-  /** `meta.currentTradingPeriod.regular`, epoch seconds. Null when absent. */
+  /**
+   * Regular-session window in epoch seconds, when the payload carries one.
+   * Yahoo publishes it in `meta.currentTradingPeriod.regular`; Finnhub does
+   * not, which is what `/stock/market-status` is for.
+   */
   sessionStart: number | null;
   sessionEnd: number | null;
   /** When this process fetched it, for the cache-age label. */
   fetchedAt: number;
+  provider: UnderSource;
 };
+
+/**
+ * Finnhub's authoritative per-exchange session state.
+ *
+ * `GET /api/v1/stock/market-status?exchange=US`. This replaces clock and
+ * timezone arithmetic with the exchange's own answer, and it is the only thing
+ * in the stack that knows about market holidays by name.
+ */
+export type MarketStatus = {
+  exchange: string;
+  isOpen: boolean;
+  /** `pre-market` | `regular` | `post-market`, or null when closed. */
+  session: string | null;
+  /** Holiday event name when one applies. */
+  holiday: string | null;
+  /** Finnhub's own clock at the time of the answer. */
+  t: number | null;
+};
+
+/** The only session in which a US equity basis is a live basis. */
+const REGULAR_SESSION = "regular";
 
 export type BasisPair = {
   sym: string;
@@ -136,6 +176,122 @@ export function indexJupiter(payload: unknown): Map<string, JupToken> {
 }
 
 /**
+ * Parse one Finnhub `/api/v1/quote` response into an underlying quote.
+ *
+ * Shape VERIFIED against live 200s on 2026-09-16, and it matches the OpenAPI
+ * definitions the docs page embeds:
+ *
+ *   GET /api/v1/quote?symbol=AAPL
+ *   {"c":333.27,"d":1.93,"dp":0.5825,"h":335.48,"l":331.87,"o":331.96,
+ *    "pc":331.34,"t":1789580577}
+ *
+ *   c current price · d change · dp percent change · h high · l low
+ *   o open · pc previous close · t last-trade time, epoch seconds
+ *
+ * Only `c` is required here; `t` is read defensively because a missing one
+ * costs the row nothing but its live/stale label. ETFs are covered on the free
+ * tier: SPY answered `{"c":759.58,...}` in the same batch.
+ *
+ * Auth failures were probed keyless and are real: no token gives HTTP 401
+ * `{"error":"Please use an API key."}`, a junk token HTTP 401
+ * `{"error":"Invalid API key."}`.
+ */
+export function parseFinnhubQuote(sym: string, payload: unknown, fetchedAtSec: number): UnderQuote {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new QuoteShapeError(
+      `Finnhub ${sym}: expected an object, got ${payload === null ? "null" : typeof payload}`,
+      sym,
+    );
+  }
+
+  const q = payload as Record<string, unknown>;
+
+  // Finnhub reports auth and quota failures as `{"error": "..."}`. Those
+  // arrive with a non-200 today, but a 200 carrying an error object is how
+  // several APIs report a throttle and it must never be read as a price.
+  if (typeof q.error === "string") {
+    throw new QuoteShapeError(`Finnhub ${sym}: ${q.error.slice(0, 120)}`, sym);
+  }
+
+  const px = num(q.c);
+
+  // VERIFIED: an unknown or uncovered symbol does not 404. It answers HTTP 200
+  // with `{"c":0,"d":null,"dp":null,"h":0,"l":0,"o":0,"pc":0,"t":0}`. That is
+  // precisely the payload that would ship a $0 underlying and a -10000 bps
+  // basis, so it is named and thrown. `d`/`dp` are null there, not zero, which
+  // is why the all-zero test reads c/pc/h/l and not the change fields.
+  if (px === 0 && num(q.pc) === 0 && num(q.h) === 0 && num(q.l) === 0) {
+    throw new QuoteShapeError(
+      `Finnhub ${sym}: all-zero quote, the symbol is unknown or not covered by this plan`,
+      sym,
+    );
+  }
+  if (px === null || px <= 0) {
+    throw new QuoteShapeError(`Finnhub ${sym}: c is ${JSON.stringify(q.c)}`, sym);
+  }
+
+  const t = num(q.t);
+  return {
+    sym,
+    px,
+    // The payload states no currency. `/quote` is documented US-only and the
+    // symbol set is the committed MINTS list, so there is nothing to
+    // cross-check against; an assumed "USD" would be invented data.
+    currency: null,
+    quotedAt: t !== null && t > 0 ? t : null,
+    // Finnhub publishes no session window on a quote. `/stock/market-status`
+    // carries it instead, and `isMarketOpen` takes it as its third argument.
+    sessionStart: null,
+    sessionEnd: null,
+    fetchedAt: fetchedAtSec,
+    provider: "finnhub",
+  };
+}
+
+/**
+ * Parse `GET /api/v1/stock/market-status?exchange=US`.
+ *
+ * VERIFIED live on 2026-09-16 at 13:43 ET, mid-session:
+ *
+ *   {"exchange":"US","holiday":null,"isOpen":true,"session":"regular",
+ *    "t":1789580601,"timezone":"America/New_York"}
+ *
+ * Finnhub's published sample shows the other side of it, and that is the
+ * useful part: `{"isOpen":false,"session":"pre-market"}`. `isOpen` is already
+ * false during pre-market, so it tracks the regular session and not an
+ * extended one.
+ *
+ * `isOpen` is the only required field. A payload without a boolean there is
+ * not a market status, and guessing one would put a "market open" badge on a
+ * Sunday.
+ */
+export function parseMarketStatus(payload: unknown): MarketStatus {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new QuoteShapeError(
+      `Finnhub market-status: expected an object, got ${payload === null ? "null" : typeof payload}`,
+    );
+  }
+
+  const s = payload as Record<string, unknown>;
+  if (typeof s.error === "string") {
+    throw new QuoteShapeError(`Finnhub market-status: ${s.error.slice(0, 120)}`);
+  }
+  if (typeof s.isOpen !== "boolean") {
+    throw new QuoteShapeError(
+      `Finnhub market-status: isOpen is ${JSON.stringify(s.isOpen)}, expected a boolean`,
+    );
+  }
+
+  return {
+    exchange: typeof s.exchange === "string" ? s.exchange : "",
+    isOpen: s.isOpen,
+    session: typeof s.session === "string" ? s.session : null,
+    holiday: typeof s.holiday === "string" ? s.holiday : null,
+    t: num(s.t),
+  };
+}
+
+/**
  * Parse one Yahoo chart response into an underlying quote.
  *
  * Every failure throws. A symbol that cannot be parsed is omitted from the
@@ -192,36 +348,54 @@ export function parseYahooChart(sym: string, payload: unknown, fetchedAtSec: num
     sessionStart: regular ? num(regular.start) : null,
     sessionEnd: regular ? num(regular.end) : null,
     fetchedAt: fetchedAtSec,
+    provider: "yahoo",
   };
 }
 
 /**
  * Is the underlying's exchange actually trading right now?
  *
- * ponytail: derived from the payload's own timestamps, with no clock or
- * timezone arithmetic anywhere in this repo.
+ * ponytail: no clock or timezone arithmetic anywhere in this repo. The answer
+ * comes from the exchange (Finnhub `/stock/market-status`) or from the
+ * payload's own timestamps (Yahoo), never from `new Date()` and a table of US
+ * holidays.
  *
- * `meta.marketState` is NOT used: it is absent from the chart response
+ * `meta.marketState` is NOT used: it is absent from Yahoo's chart response
  * entirely (a probe reported it as null), so anything built on it would be
  * silently false for every row.
  *
- * Two conditions, and both are needed:
+ * Quote freshness is a condition in every branch. `status` answers "is the
+ * bell ringing", which is not the same question as "is this number a live
+ * tick": a row whose last print is 20 minutes old during an open session is
+ * still a stale number and is not drawn as a live one.
  *
- *  1. `now` falls inside `currentTradingPeriod.regular`, the session window
- *     Yahoo publishes in epoch seconds alongside the quote. This is what
- *     catches 16:00:01 ET, when the last print is seconds old but the bell has
- *     rung. A freshness-only rule calls that market open for 15 more minutes.
- *  2. `regularMarketTime` is younger than QUOTE_STALE_SEC. This is what catches
- *     a market holiday, where Yahoo still publishes a nominal 09:30-16:00
- *     window but the last print is from the previous session.
+ * With a `status` the exchange's own answer wins, and the row must be in the
+ * REGULAR session. Finnhub's own sample has `isOpen:false` during pre-market,
+ * so the session check is belt and braces; if the two ever disagree this fails
+ * towards "closed", which is the honest direction.
  *
- * If `currentTradingPeriod` is ever absent, condition 2 stands alone. That is
- * weaker (it keeps saying "open" for up to 15 minutes after the close) but it
- * still never claims an overnight last close is live, and it still needs no
- * hardcoded US/Eastern rules.
+ * Without one it falls back to Yahoo's published window:
+ *
+ *  1. `now` inside `currentTradingPeriod.regular`. This catches 16:00:01 ET,
+ *     when the last print is seconds old but the bell has rung. A
+ *     freshness-only rule calls that market open for 15 more minutes.
+ *  2. `regularMarketTime` younger than QUOTE_STALE_SEC. This catches a market
+ *     holiday, where Yahoo still publishes a nominal 09:30-16:00 window but
+ *     the last print is from the previous session.
+ *
+ * If the window is absent too, condition 2 stands alone. That is weaker (it
+ * keeps saying "open" for up to 15 minutes after the close) but it still never
+ * claims an overnight last close is live. Every Finnhub quote lands in that
+ * branch when the status endpoint is down, since a Finnhub quote carries no
+ * session window of its own.
  */
-export function isMarketOpen(q: UnderQuote, nowSec: number): boolean {
+export function isMarketOpen(
+  q: UnderQuote,
+  nowSec: number,
+  status: MarketStatus | null = null,
+): boolean {
   const fresh = q.quotedAt !== null && nowSec - q.quotedAt < QUOTE_STALE_SEC;
+  if (status) return fresh && status.isOpen && status.session === REGULAR_SESSION;
   if (q.sessionStart === null || q.sessionEnd === null) return fresh;
   return fresh && nowSec >= q.sessionStart && nowSec < q.sessionEnd;
 }
@@ -236,6 +410,7 @@ export function buildBasisPairs(
   jupByMint: Map<string, JupToken>,
   underBySym: Map<string, UnderQuote>,
   nowSec: number,
+  status: MarketStatus | null = null,
 ): { pairs: BasisPair[]; unresolved: Unresolved[] } {
   const pairs: BasisPair[] = [];
   const unresolved: Unresolved[] = [];
@@ -260,7 +435,7 @@ export function buildBasisPairs(
 
     const u = underBySym.get(m.sym);
     if (!u) {
-      unresolved.push({ sym: m.sym, reason: "no underlying quote from Yahoo" });
+      unresolved.push({ sym: m.sym, reason: "no underlying quote from Finnhub or Yahoo" });
       continue;
     }
 
@@ -282,12 +457,15 @@ export function buildBasisPairs(
       underPx: u.px,
       bps: b,
       verdict: verdict(b),
-      marketOpen: isMarketOpen(u, nowSec),
+      marketOpen: isMarketOpen(u, nowSec, status),
       liquidityUsd,
       tradeable,
       source: {
         token: "jupiter",
-        under: nowSec - u.fetchedAt > UNDER_FRESH_SEC ? "yahoo:cached" : "yahoo",
+        // Which upstream actually produced this number, and whether it is this
+        // round's read or a memoised one. A UI that labels every row "finnhub"
+        // while the leg is down is the failure this field exists to prevent.
+        under: nowSec - u.fetchedAt > UNDER_FRESH_SEC ? `${u.provider}:cached` : u.provider,
       },
     });
   }

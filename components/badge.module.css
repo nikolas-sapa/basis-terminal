@@ -1,0 +1,40 @@
+/* One badge, three tones, no orange. Colours come from the :root tokens in
+   app/globals.css; the *-fg pair is the dark-surface-legible one (7.1:1 and
+   10.1:1 against --bg, where the raw --rich/--cheap measure 4.1:1 and 3.7:1). */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 9999px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+.rich {
+  color: var(--rich-fg);
+  border-color: color-mix(in srgb, var(--rich-fg) 45%, transparent);
+}
+
+.cheap {
+  color: var(--cheap-fg);
+  border-color: color-mix(in srgb, var(--cheap-fg) 45%, transparent);
+}
+
+.accent {
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: currentColor;
+  flex: none;
+}

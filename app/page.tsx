@@ -1,3 +1,4 @@
+import { BasisTable } from "@/components/BasisTable";
 import { CrossVenue } from "@/components/CrossVenue";
 import { PreIpoTable } from "@/components/PreIpoTable";
 import { Provenance } from "@/components/Provenance";
@@ -18,7 +19,7 @@ export default function Home() {
           </p>
         </header>
 
-        {/* Tier 1 (listed equities, tradeable basis) mounts above this line. */}
+        <BasisTable />
 
         <PreIpoTable />
         <CrossVenue />

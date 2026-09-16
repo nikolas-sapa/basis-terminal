@@ -2,12 +2,15 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   indexJupiter,
+  parseFinnhubQuote,
+  parseMarketStatus,
   parseYahooChart,
   isMarketOpen,
   buildBasisPairs,
   QuoteShapeError,
   UNDER_FRESH_SEC,
   QUOTE_STALE_SEC,
+  type MarketStatus,
   type UnderQuote,
 } from "./quotes.ts";
 import { MINTS, LIQUIDITY_FLOOR_USD } from "./mints.ts";
@@ -126,6 +129,57 @@ const NOW = 1789578160;
 const OPEN = 1789565400;
 const CLOSE = 1789588800;
 
+// ---------------------------------------------------------------------------
+// Finnhub fixtures. Every one of these is a literal captured from a live 200
+// on 2026-09-16 at roughly 13:43 ET, mid-session, with a real key:
+//   GET https://finnhub.io/api/v1/quote?symbol=<SYM>
+//   GET https://finnhub.io/api/v1/stock/market-status?exchange=US
+// Nothing here is reconstructed from the docs.
+// ---------------------------------------------------------------------------
+
+const FH_AAPL = { c: 333.27, d: 1.93, dp: 0.5825, h: 335.48, l: 331.87, o: 331.96, pc: 331.34, t: 1789580577 };
+const FH_NVDA = { c: 214.97, d: 2.8, dp: 1.3197, h: 216.76, l: 213.31, o: 213.945, pc: 212.17, t: 1789580600 };
+const FH_META = { c: 675.18, d: 4.94, dp: 0.737, h: 685.31, l: 674.2901, o: 676.0425, pc: 670.24, t: 1789580599 };
+/** SPY, to prove the free tier covers ETFs and not just single names. */
+const FH_SPY = { c: 759.58, d: 2.19, dp: 0.2892, h: 761.67, l: 758.723, o: 759.195, pc: 757.39, t: 1789580577 };
+
+/**
+ * The trap. A symbol Finnhub does not cover answers HTTP 200, not 404, with
+ * every price field zeroed and the change fields null. Captured from
+ * `?symbol=ZZZZFAKE`.
+ */
+const FH_UNKNOWN = { c: 0, d: null, dp: null, h: 0, l: 0, o: 0, pc: 0, t: 0 };
+
+/** Real 401 bodies, captured keyless and with a junk token. */
+const FH_NO_KEY = { error: "Please use an API key." };
+const FH_BAD_KEY = { error: "Invalid API key." };
+
+const FH_STATUS_OPEN = {
+  exchange: "US",
+  holiday: null,
+  isOpen: true,
+  session: "regular",
+  t: 1789580601,
+  timezone: "America/New_York",
+};
+
+/**
+ * Finnhub's own published sample for the same endpoint. Not captured live (the
+ * market was open), but it is the documented other side of the flag and the
+ * reason `isOpen` is trusted: it is already false during pre-market.
+ */
+const FH_STATUS_PRE = {
+  exchange: "US",
+  holiday: null,
+  isOpen: false,
+  session: "pre-market",
+  t: 1697018041,
+  timezone: "America/New_York",
+};
+
+/** A few seconds after the quotes above were captured. */
+const FH_NOW = 1789580610;
+
 const quote = (over: Partial<UnderQuote> = {}): UnderQuote => ({
   sym: "AAPL",
   px: 332.58,
@@ -134,6 +188,7 @@ const quote = (over: Partial<UnderQuote> = {}): UnderQuote => ({
   sessionStart: OPEN,
   sessionEnd: CLOSE,
   fetchedAt: NOW,
+  provider: "yahoo",
   ...over,
 });
 
@@ -231,6 +286,103 @@ test("parseYahooChart tolerates a missing currentTradingPeriod", () => {
   assert.equal(q.sessionEnd, null);
 });
 
+// ---- Finnhub parsing ------------------------------------------------------
+
+test("parseFinnhubQuote reads the price and the last-trade time from a real payload", () => {
+  const q = parseFinnhubQuote("AAPL", FH_AAPL, FH_NOW);
+  assert.equal(q.px, 333.27);
+  assert.equal(q.quotedAt, 1789580577);
+  assert.equal(q.fetchedAt, FH_NOW);
+  assert.equal(q.provider, "finnhub");
+  // The payload states no currency and carries no session window. Claiming
+  // either would be inventing data; market-status supplies the session.
+  assert.equal(q.currency, null);
+  assert.equal(q.sessionStart, null);
+  assert.equal(q.sessionEnd, null);
+});
+
+test("parseFinnhubQuote covers ETFs, not just single names", () => {
+  assert.equal(parseFinnhubQuote("SPY", FH_SPY, FH_NOW).px, 759.58);
+});
+
+// The single most dangerous response in this integration: a symbol Finnhub
+// does not cover returns HTTP 200 with a zeroed body rather than a 404. Read
+// as a price it puts a $0 underlying on screen and a -10000 bps basis beside
+// it. It must abort the symbol.
+test("parseFinnhubQuote throws on the all-zero body of an uncovered symbol", () => {
+  assert.throws(
+    () => parseFinnhubQuote("ZZZZFAKE", FH_UNKNOWN, FH_NOW),
+    (e: unknown) => e instanceof QuoteShapeError && /all-zero|unknown/i.test(e.message),
+  );
+});
+
+test("parseFinnhubQuote throws on a missing, negative or non-numeric price", () => {
+  for (const c of [undefined, null, -1, "333.27", NaN]) {
+    assert.throws(
+      () => parseFinnhubQuote("AAPL", { ...FH_AAPL, c }, FH_NOW),
+      QuoteShapeError,
+      `accepted c=${String(c)}`,
+    );
+  }
+});
+
+// A 200 carrying an error object is how several APIs report a throttle, and
+// these two bodies are the real ones Finnhub sends today (with a 401).
+test("parseFinnhubQuote refuses a payload carrying an error string", () => {
+  assert.throws(() => parseFinnhubQuote("AAPL", FH_NO_KEY, FH_NOW), QuoteShapeError);
+  assert.throws(() => parseFinnhubQuote("AAPL", FH_BAD_KEY, FH_NOW), QuoteShapeError);
+});
+
+test("parseFinnhubQuote refuses anything that is not an object", () => {
+  for (const p of [null, undefined, "Too Many Requests", [FH_AAPL], 42]) {
+    assert.throws(() => parseFinnhubQuote("AAPL", p, FH_NOW), QuoteShapeError, `accepted ${String(p)}`);
+  }
+});
+
+// A missing timestamp costs the row its live/stale label, not its price.
+test("parseFinnhubQuote keeps a good price when the timestamp is absent or zero", () => {
+  const noT = parseFinnhubQuote("AAPL", { ...FH_AAPL, t: undefined }, FH_NOW);
+  assert.equal(noT.px, 333.27);
+  assert.equal(noT.quotedAt, null);
+  assert.equal(parseFinnhubQuote("AAPL", { ...FH_AAPL, t: 0 }, FH_NOW).quotedAt, null);
+});
+
+// ---- Finnhub market status ------------------------------------------------
+
+test("parseMarketStatus reads the live mid-session payload", () => {
+  const s = parseMarketStatus(FH_STATUS_OPEN);
+  assert.equal(s.isOpen, true);
+  assert.equal(s.session, "regular");
+  assert.equal(s.exchange, "US");
+  assert.equal(s.holiday, null);
+  assert.equal(s.t, 1789580601);
+});
+
+// The reason the flag is trusted at all: Finnhub already reports pre-market as
+// closed, so `isOpen` tracks the regular session and not an extended one.
+test("parseMarketStatus reports pre-market as closed", () => {
+  const s = parseMarketStatus(FH_STATUS_PRE);
+  assert.equal(s.isOpen, false);
+  assert.equal(s.session, "pre-market");
+});
+
+test("parseMarketStatus carries a holiday name through", () => {
+  const s = parseMarketStatus({ ...FH_STATUS_OPEN, isOpen: false, session: null, holiday: "Christmas" });
+  assert.equal(s.holiday, "Christmas");
+  assert.equal(s.session, null);
+});
+
+// Guessing an isOpen would put a "market open" badge on a Sunday.
+test("parseMarketStatus throws rather than guessing a missing isOpen", () => {
+  const noFlag = { ...FH_STATUS_OPEN } as Record<string, unknown>;
+  delete noFlag.isOpen;
+  assert.throws(() => parseMarketStatus(noFlag), QuoteShapeError);
+  assert.throws(() => parseMarketStatus({ ...FH_STATUS_OPEN, isOpen: "true" }), QuoteShapeError);
+  assert.throws(() => parseMarketStatus(FH_NO_KEY), QuoteShapeError);
+  assert.throws(() => parseMarketStatus(null), QuoteShapeError);
+  assert.throws(() => parseMarketStatus([FH_STATUS_OPEN]), QuoteShapeError);
+});
+
 // ---- market-open detection ------------------------------------------------
 
 test("isMarketOpen is true inside the session window with a fresh quote", () => {
@@ -261,6 +413,64 @@ test("isMarketOpen falls back to quote freshness when no session window is given
   assert.equal(isMarketOpen(quote({ sessionStart: null, sessionEnd: null }), NOW), true);
   assert.equal(
     isMarketOpen(quote({ sessionStart: null, sessionEnd: null, quotedAt: NOW - QUOTE_STALE_SEC - 1 }), NOW),
+    false,
+  );
+});
+
+// ---- market-open detection, with Finnhub's authoritative status -----------
+
+/** A real Finnhub quote, parsed. Carries no session window of its own. */
+const fh = (payload: unknown = FH_AAPL, sym = "AAPL", over: Partial<UnderQuote> = {}): UnderQuote => ({
+  ...parseFinnhubQuote(sym, payload, FH_NOW),
+  ...over,
+});
+const OPEN_STATUS: MarketStatus = parseMarketStatus(FH_STATUS_OPEN);
+const PRE_STATUS: MarketStatus = parseMarketStatus(FH_STATUS_PRE);
+
+test("a Finnhub quote has no window of its own, so the exchange's status supplies one", () => {
+  const q = fh();
+  assert.equal(q.sessionStart, null);
+  assert.equal(isMarketOpen(q, FH_NOW, OPEN_STATUS), true);
+});
+
+// The case clock arithmetic gets wrong and the exchange does not: seconds
+// after the bell the last print is still fresh, but nothing is trading.
+test("isMarketOpen is false when the exchange says closed, however fresh the quote", () => {
+  assert.equal(isMarketOpen(fh(), FH_NOW, PRE_STATUS), false);
+  assert.equal(
+    isMarketOpen(fh(), FH_NOW, { ...OPEN_STATUS, isOpen: false, session: null, holiday: "Christmas" }),
+    false,
+  );
+});
+
+// If the flag and the session label ever disagree, fail towards "closed".
+test("isMarketOpen refuses an extended session even when isOpen contradicts it", () => {
+  assert.equal(isMarketOpen(fh(), FH_NOW, { ...OPEN_STATUS, session: "pre-market" }), false);
+  assert.equal(isMarketOpen(fh(), FH_NOW, { ...OPEN_STATUS, session: "post-market" }), false);
+  assert.equal(isMarketOpen(fh(), FH_NOW, { ...OPEN_STATUS, session: null }), false);
+});
+
+// An open exchange is not a live number. A row whose last print is 20 minutes
+// old is a stale number and must not be drawn as a tick.
+test("isMarketOpen still requires a fresh quote while the exchange is open", () => {
+  assert.equal(isMarketOpen(fh(FH_AAPL, "AAPL", { quotedAt: FH_NOW - QUOTE_STALE_SEC }), FH_NOW, OPEN_STATUS), false);
+  assert.equal(isMarketOpen(fh(FH_AAPL, "AAPL", { quotedAt: null }), FH_NOW, OPEN_STATUS), false);
+});
+
+// The status endpoint is an enhancement, not a dependency: without it a
+// Finnhub row degrades to freshness only rather than disappearing.
+test("isMarketOpen degrades to freshness for a Finnhub quote when the status is missing", () => {
+  assert.equal(isMarketOpen(fh(), FH_NOW, null), true);
+  assert.equal(isMarketOpen(fh(FH_AAPL, "AAPL", { quotedAt: FH_NOW - QUOTE_STALE_SEC }), FH_NOW, null), false);
+});
+
+// A half-day close: Yahoo keeps publishing a nominal 09:30-16:00 window, the
+// exchange knows better. The exchange wins.
+test("the exchange's status overrides Yahoo's published window", () => {
+  const inWindow = quote({ quotedAt: OPEN + 3600, fetchedAt: OPEN + 3600 });
+  assert.equal(isMarketOpen(inWindow, OPEN + 3600), true);
+  assert.equal(
+    isMarketOpen(inWindow, OPEN + 3600, { ...OPEN_STATUS, isOpen: false, session: null }),
     false,
   );
 });
@@ -390,4 +600,60 @@ test("marketOpen is a boolean on every row, never undefined", () => {
   const { pairs } = buildBasisPairs(jup, under([quote(), quote({ sym: "NVDA", px: 215.765 })]), NOW);
   assert.equal(pairs.length, 2);
   for (const p of pairs) assert.equal(typeof p.marketOpen, "boolean");
+});
+
+// ---- row assembly: which upstream actually priced the row -----------------
+
+test("a Finnhub-priced row says so, with the real captured price", () => {
+  const [aapl] = buildBasisPairs(jup, under([fh()]), FH_NOW, OPEN_STATUS).pairs;
+  assert.equal(aapl.underPx, 333.27);
+  assert.equal(aapl.tokenPx, 332.9810802801566);
+  assert.deepEqual(aapl.source, { token: "jupiter", under: "finnhub" });
+  assert.equal(aapl.marketOpen, true);
+});
+
+test("a memoised Finnhub quote is labelled finnhub:cached, never finnhub", () => {
+  const stale = fh(FH_AAPL, "AAPL", { fetchedAt: FH_NOW - UNDER_FRESH_SEC - 1 });
+  const [aapl] = buildBasisPairs(jup, under([stale]), FH_NOW, OPEN_STATUS).pairs;
+  assert.equal(aapl.source.under, "finnhub:cached");
+});
+
+// While Finnhub is down the fallback fills in, and a mixed table must not
+// label the fallback rows as Finnhub reads.
+test("a table mixing both sources labels each row with the upstream that priced it", () => {
+  const yahooNvda = quote({
+    sym: "NVDA",
+    px: 214.9,
+    quotedAt: FH_NOW - 10,
+    fetchedAt: FH_NOW,
+    sessionStart: null,
+    sessionEnd: null,
+  });
+  const { pairs } = buildBasisPairs(jup, under([fh(), yahooNvda]), FH_NOW, OPEN_STATUS);
+  const bySym = new Map(pairs.map((p) => [p.sym, p]));
+  assert.equal(bySym.get("AAPL")!.source.under, "finnhub");
+  assert.equal(bySym.get("NVDA")!.source.under, "yahoo");
+  assert.equal(bySym.get("NVDA")!.underPx, 214.9);
+});
+
+test("the exchange's status drives marketOpen on every row at once", () => {
+  const rows = under([fh(), fh(FH_NVDA, "NVDA"), fh(FH_META, "META")]);
+  const open = buildBasisPairs(jup, rows, FH_NOW, OPEN_STATUS).pairs;
+  assert.equal(open.length, 3);
+  for (const p of open) assert.equal(p.marketOpen, true, `${p.sym} should be open`);
+
+  const closed = buildBasisPairs(jup, rows, FH_NOW, PRE_STATUS).pairs;
+  assert.equal(closed.length, 3);
+  for (const p of closed) assert.equal(p.marketOpen, false, `${p.sym} should be closed`);
+});
+
+// The mint rule does not relax because the underlying source changed.
+test("switching the underlying source changes no mint and invents no row", () => {
+  const { pairs, unresolved } = buildBasisPairs(jup, under([fh(), fh(FH_META, "META")]), FH_NOW, OPEN_STATUS);
+  assert.deepEqual(pairs.map((p) => p.sym).sort(), ["AAPL", "META"]);
+  for (const p of pairs) {
+    assert.equal(p.mint, MINTS.find((m) => m.sym === p.sym)!.mint);
+    assert.ok(p.underPx > 0 && p.tokenPx > 0);
+  }
+  assert.equal(pairs.length + unresolved.length, MINTS.length);
 });
