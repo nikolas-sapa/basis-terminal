@@ -25,8 +25,8 @@ const JUPITER_URL = "https://lite-api.jup.ag/tokens/v2/tag?query=verified";
 const yahooUrl = (sym: string) =>
   `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=1d`;
 
-// The chart endpoint 403s a bare fetch. It is undocumented, so this is a
-// compatibility header, not an attempt to look like anything we are not.
+// The chart endpoint is undocumented and rejects a default fetch User-Agent.
+// This is a compatibility header, nothing more.
 const BROWSER_UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
 
@@ -192,6 +192,7 @@ async function refreshUnderlyings(
 
   if (due.length === 0) return { ok: 0, failures: [] };
 
+  throttledThisRound = false;
   const settled = await Promise.allSettled(due.map((sym) => fetchUnder(sym, nowSec)));
   const failures: string[] = [];
   let ok = 0;
@@ -203,6 +204,14 @@ async function refreshUnderlyings(
       failures.push(s.reason instanceof Error ? s.reason.message : String(s.reason));
     }
   });
+
+  if (ok > 0) yahooStrikes = 0;
+  if (throttledThisRound) {
+    yahooStrikes += 1;
+    const wait = Math.min(COOLDOWN_BASE_MS * 2 ** (yahooStrikes - 1), COOLDOWN_MAX_MS);
+    yahooCooldownUntil = Date.now() + wait;
+    failures.push(`backing off ${wait / 1000}s after ${yahooStrikes} throttled round(s)`);
+  }
 
   if (failures.length) console.error(`[/api/basis] yahoo: ${failures.join(" | ")}`);
   return { ok, failures };

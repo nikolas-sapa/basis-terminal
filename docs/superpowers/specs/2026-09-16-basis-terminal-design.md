@@ -239,3 +239,54 @@ Two consequences for the route:
    403s in full and the 3 good feeds never return.
 2. The 15-symbol `PAIRS` list therefore produces nothing via Pyth today. The
    keyless path in `lib/quotes.ts` is what serves all 15.
+
+---
+
+## Amendment 3, 2026-09-16: corrections from UI implementation
+
+### The liveness roster in Amendment 1 was wrong
+
+Amendment 1 claimed SpaceX/OpenAI/Neuralink tick while Anduril/Figure AI/Kalshi/
+Polymarket are static. Measured over 15 polls at 20s plus four browser sessions:
+SpaceX never moved, Figure AI never moved, and Anduril, Kalshi and Polymarket all
+moved. Anthropic, omitted from that roster entirely, moves most.
+
+**The real behaviour: every token holds a flat plateau for 60-80 seconds.** So a
+STATIC verdict is a statement about the sampling window, not about the token. A
+30s poll with a 3-sample window frequently mislabels a mover as static.
+
+`isStale` stays a 3-sample check, but the poll is 45s so the window spans 90s and
+clears the plateau. The UI states the window length on screen, because a liveness
+badge that doesn't disclose its window is making an unfalsifiable claim.
+
+### PreStocks rate-limits
+
+3s polling returns 429 after five requests; even 20s hit one. The original "poll
+every 10s" would have been unsafe. Tier 2 polls at 45s, staggers its second
+request, and retains last-good data on failure rather than blanking, saying so
+on screen.
+
+### Yahoo is an IP-level token bucket
+
+15 concurrent chart requests: 3x200, 12x429, then ~6 minutes of lockout at
+45s-spaced retries. Not per-endpoint throttling, an IP bucket with slow refill.
+The route therefore refreshes at most 3 stale symbols per invocation, oldest
+first, memoises each quote, and goes silent for 90s after any 429. Memoised rows
+are labelled `source.under = "yahoo:cached"`, never `"yahoo"`.
+
+This is why Finnhub replaces Yahoo as the primary underlying source.
+
+### marketOpen has a clean derivation, no timezone arithmetic
+
+`marketState` is not merely null in Yahoo's response, it is absent from `meta`
+entirely. `marketOpen` derives from `currentTradingPeriod.regular.start/end`
+(verified as exactly 09:30-16:00 America/New_York, in epoch seconds) combined
+with `regularMarketTime` freshness. No hand-rolled timezone handling anywhere.
+
+### The design tokens failed WCAG contrast
+
+`--rich #d92d20` measures 4.1:1 and `--cheap #027a48` 3.7:1 against `--bg
+#0a0a0a`, both below the 4.5:1 minimum for body text. Verified independently via
+relative-luminance calculation. Replaced with lighter foreground variants
+(`--rich-fg #ff6166` and a matching green) measured at 7.1:1 and 10.1:1.
+Accessibility is not a shortcut this project takes.
