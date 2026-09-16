@@ -20,6 +20,17 @@
 - Node 25 runs `.ts` directly. No ts-node, no vitest, no jest.
 - Never display a static `tokenPrice` as a live tick. Liveness is per-token.
 - No package may be added without `npm show <pkg> version` first. npm only.
+- **No non-erasable TypeScript anywhere:** no parameter properties, no `enum`,
+  no `namespace` with runtime members, no `import x = require()`, no `export =`,
+  no constructor overloads. Node runs `.ts` in strip-only mode and throws
+  `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX` at import time, taking down the whole
+  `node --test` run as a SyntaxError rather than a test failure. These all
+  compile fine under Next/SWC, so the breakage only appears under the test
+  runner. `tsconfig.json` sets `erasableSyntaxOnly: true` to surface it at
+  typecheck instead (verified: a parameter property yields TS1294).
+- **Pyth requests must include ONLY entitled feed ids.** `ignore_invalid_price_ids`
+  covers unknown ids, not unentitled ones, so one 403 id kills the entire batch.
+  With all 30 ids the request 403s before the 3 entitled equity feeds return.
 - **Task 0 must complete before Task 7:** the repo has no `origin` remote. The hackathon submission requires a GitHub link.
 
 ---

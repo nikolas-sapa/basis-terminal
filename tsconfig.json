@@ -10,6 +10,11 @@
     // relative imports; tsc rejects it without this flag. Keeps `node --test`
     // and `next build` agreeing on one import style.
     "allowImportingTsExtensions": true,
+    // Node runs .ts in strip-only mode: it erases annotations and emits no new
+    // code. Parameter properties, enums and namespaces require codegen, so they
+    // throw ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX at import time under `node --test`
+    // while compiling fine under Next/SWC. This makes tsc reject them up front.
+    "erasableSyntaxOnly": true,
     "esModuleInterop": true,
     "module": "esnext",
     "moduleResolution": "bundler",

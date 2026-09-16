@@ -221,3 +221,21 @@ but hardcoding the exponent would misprice by 1000x. Never assume it.
 `price.price` and `price.conf` are JSON strings (`as_string` serde attribute);
 `expo` and `publish_time` are numbers. Confirmed against the Hermes server
 source.
+
+### Correction: Pyth alone yields zero complete rows
+
+The entitled set is 3 equity underlyings (TSLA px 361.41, QQQ 709.69, VOO 698.46,
+all expo -5, sub-second publish times) and zero tokenized feeds. A basis row
+needs both legs, and no row has both: TSLA's underlying is entitled while
+`Crypto.TSLAX/USD` is not.
+
+So Pyth contributes only in the hybrid: Pyth underlying + Jupiter token price.
+That yields 2 usable rows (TSLA, QQQ). VOO is excluded because VOOx has $0
+liquidity.
+
+Two consequences for the route:
+1. Request ONLY the entitled ids. `ignore_invalid_price_ids=true` handles
+   unknown ids, not unentitled ones, so a batch containing any unentitled id
+   403s in full and the 3 good feeds never return.
+2. The 15-symbol `PAIRS` list therefore produces nothing via Pyth today. The
+   keyless path in `lib/quotes.ts` is what serves all 15.
