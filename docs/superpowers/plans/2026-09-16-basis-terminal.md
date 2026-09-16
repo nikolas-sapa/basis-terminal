@@ -270,7 +270,7 @@ export async function GET() {
 
 - [ ] **Step 5: Verify live**
 
-Run: `npm run dev` then `curl -s localhost:3000/api/pyth | jq '.pairs | length, .pairs[0]'`
+Run: `npm run dev` then `curl -s localhost:3000/api/pyth | jq '(.pairs|length), .pairs[0]'`
 Expected: >= 15 pairs, first row has non-zero `bps` and a boolean `marketOpen`.
 
 - [ ] **Step 6: Commit**
@@ -391,7 +391,7 @@ export async function GET() {
 
 - [ ] **Step 4: Run tests green, then verify live**
 
-Run: `node --test lib/preipo.test.ts` then `curl -s localhost:3000/api/preipo | jq '.rows | length, .crossVenue'`
+Run: `node --test lib/preipo.test.ts` then `curl -s localhost:3000/api/preipo | jq '(.rows|length), .crossVenue'`
 Expected: 8 rows, 3 cross-venue rows, SpaceX premium near -21.7%.
 
 - [ ] **Step 5: Commit**
@@ -579,8 +579,8 @@ vercel --prod
 - [ ] **Step 3: Verify the live URL, not the build log**
 
 ```bash
-curl -s https://<deployed>/api/pyth | jq '.pairs | length'
-curl -s https://<deployed>/api/preipo | jq '.rows | length'
+curl -s https://<deployed>/api/pyth | jq '(.pairs|length)'
+curl -s https://<deployed>/api/preipo | jq '(.rows|length)'
 ```
 
 Expected: >= 15 and 8. A green deploy is not a working deploy.
