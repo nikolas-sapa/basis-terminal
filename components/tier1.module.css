@@ -460,3 +460,9 @@
     padding: 8px 10px;
   }
 }
+
+/* A fallback that was not needed is neither healthy nor broken: it is idle.
+   Rendering it as "down" makes a working product look failed. */
+.dotIdle {
+  background: var(--muted);
+}

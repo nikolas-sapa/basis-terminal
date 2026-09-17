@@ -132,7 +132,23 @@ export function BasisTable() {
     };
   }, []);
 
-  const sourceChips = Object.entries(sources ?? {});
+  /**
+   * `sources.X` means "X served a row this round", which is not the same as
+   * "X is healthy". Yahoo is a fallback: while Finnhub is up, Yahoo is
+   * deliberately never called, and rendering that as "yahoo down" tells a
+   * visitor the product is broken when it is working exactly as designed.
+   * A fallback that is idle is on standby; only a fallback that was actually
+   * needed and failed is down.
+   */
+  const finnhubUp = sources?.finnhub === true;
+  const chipState = (name: string, served: boolean): "live" | "down" | "standby" => {
+    if (served) return "live";
+    if (name === "yahoo" && finnhubUp) return "standby";
+    return "down";
+  };
+  const sourceChips = Object.entries(sources ?? {}).map(
+    ([name, served]) => [name, chipState(name, served === true)] as const,
+  );
   const holiday = marketStatus?.holiday ?? null;
   const session = marketStatus?.session ?? null;
 
@@ -157,21 +173,23 @@ export function BasisTable() {
         <div className={styles.meta}>
           {sourceChips.length > 0 && (
             <div className={styles.sources}>
-              {sourceChips.map(([name, up]) => (
+              {sourceChips.map(([name, state]) => (
                 <span
                   key={name}
-                  className={`${styles.source} ${up ? "" : styles.sourceDown}`}
+                  className={`${styles.source} ${state === "down" ? styles.sourceDown : ""}`}
                   title={
-                    up
+                    state === "live"
                       ? `${name} answered the last poll`
-                      : `${name} did not answer the last poll`
+                      : state === "standby"
+                        ? `${name} is the fallback and was not needed: Finnhub answered every symbol`
+                        : `${name} did not answer the last poll`
                   }
                 >
                   <span
-                    className={`${styles.dot} ${up ? styles.dotUp : styles.dotDown}`}
+                    className={`${styles.dot} ${state === "live" ? styles.dotUp : state === "standby" ? styles.dotIdle : styles.dotDown}`}
                     aria-hidden="true"
                   />
-                  {name} {up ? "live" : "down"}
+                  {name} {state}
                 </span>
               ))}
             </div>
