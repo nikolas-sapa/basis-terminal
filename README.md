@@ -2,6 +2,8 @@
 
 Every tokenized stock on Solana trades at a price that is not the real price. AAPLx is not AAPL. A PreStocks SPACEX token currently sits well below its own stated NAV. Basis shows the gap, live, and lets you act on it where acting is actually possible.
 
+**Live: https://basis-terminal.vercel.app**
+
 Built for [Stocklana](https://hackathons.solana.com) (Solana Foundation).
 
 ## The two tiers are not the same thing
