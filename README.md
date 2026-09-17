@@ -40,7 +40,13 @@ So mints are resolved by address from a committed allowlist, never by symbol loo
 
 **Liquidity floor.** 839 xStocks exist; 21 clear $100k of liquidity and 794 sit under $1k. A swap control on a $200-depth token is a rug by slippage, not a trade. Below the floor a row still shows its basis but is offered no action, and every row displays its depth. The check runs against live liquidity as well as the committed snapshot, so drained depth removes the swap control without a redeploy.
 
-This turns out to be the product's central finding. In a live reading, fourteen of fifteen liquid pairs sat within 34 bps of their underlying, because arbitrage works where it can operate. The one wide basis was NFLX at **-190 bps** — and NFLXx holds $3,197 of liquidity, so it is exactly the row that gets no action. The widest apparent opportunity is the one you cannot take.
+**Fresh prices on both legs, which is harder than it sounds.** Jupiter's verified-token list is ~5MB, so it is cached for ten minutes; the equity leg refreshes every 45 seconds. Subtracting a ten-minute-old token price from a 45-second-old equity price produces a basis that measures cache lag rather than dislocation. It read convincingly: fifteen plausible rows, mean -69 bps, NFLX at -215 bps.
+
+It was wrong. Token prices now come from `price/v3` on a 30-second TTL, overlaid on the cached list for identity only, and the same table reads mean -13 bps with NFLX at -5. The sign had been flipping on 9 of 15 rows.
+
+**The tell was the distribution, not any single row.** Thirteen of fifteen rows negative into a rising equity market is the signature of one leg lagging, not of fifteen simultaneous arbitrage opportunities. A uniformly-signed basis table should be disbelieved before it is traded.
+
+And the phantom fell hardest on the thinnest token. NFLXx has the least liquidity, so it traded least often, so its cached price was stalest, so it showed the widest "opportunity." Apparent edge in an illiquid asset is usually stale data wearing a costume. That is the same instinct the liquidity floor encodes, arrived at from the opposite direction.
 
 **Per-token liveness, with its window disclosed.** An early reading suggested four of the eight PreStocks tokens never trade. Polling properly (15 samples at 20s, plus repeat sessions) showed that was an artifact: *every* token holds a flat plateau for 60-80 seconds, and which ones look frozen depends entirely on how long you watch. So a STATIC badge is a claim about the sampling window, not about the token, and the UI states the window on screen: three polls, 45 seconds apart. A liveness indicator that hides its window is making an unfalsifiable claim.
 

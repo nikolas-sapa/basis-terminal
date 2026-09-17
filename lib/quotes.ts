@@ -50,6 +50,67 @@ export type JupToken = {
   isVerified: boolean;
 };
 
+/**
+ * A fresh price for one mint, from Jupiter's `price/v3` endpoint.
+ *
+ * WHY THIS EXISTS: the verified-tag list is ~5MB, so it is cached for 10
+ * minutes, but the underlying equity leg refreshes every 45s. Subtracting a
+ * 10-minute-old token price from a 45-second-old equity price produces a basis
+ * dominated by cache skew rather than dislocation: measured live, the sign
+ * flipped on 9 of 15 rows and the whole table read uniformly CHEAP while the
+ * equity market was rising. A uniformly-signed basis is the signature of lag,
+ * not of fifteen simultaneous arbitrage opportunities.
+ *
+ * `price/v3` carries no `symbol` and no `isVerified`, so it OVERLAYS the tag
+ * list rather than replacing it. Replacing it would delete both the impostor
+ * defence and the swap gate.
+ */
+export type JupPrice = { usdPrice: number; liquidity: number | null };
+
+/** Parse `price/v3`, which is an object keyed by mint, not an array. */
+export function parseJupPrices(payload: unknown): Map<string, JupPrice> {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new QuoteShapeError(
+      `Jupiter price/v3 returned ${payload === null ? "null" : Array.isArray(payload) ? "an array" : typeof payload}, expected an object keyed by mint`,
+    );
+  }
+  const out = new Map<string, JupPrice>();
+  for (const [mint, v] of Object.entries(payload as Record<string, unknown>)) {
+    const e = v as Record<string, unknown> | null;
+    const usdPrice = num(e?.usdPrice);
+    if (usdPrice === null || usdPrice <= 0) continue;
+    out.set(mint, { usdPrice, liquidity: num(e?.liquidity) });
+  }
+  return out;
+}
+
+/**
+ * Return a copy of the identity index with fresh prices layered on.
+ *
+ * A mint absent from `prices` keeps its tag-list price rather than being
+ * dropped: a stale price is worse than a fresh one but far better than a
+ * missing row, and the row still reports its age through `tokenFresh`.
+ */
+export function overlayPrices(
+  index: Map<string, JupToken>,
+  prices: Map<string, JupPrice>,
+): { index: Map<string, JupToken>; overlaid: string[]; missed: string[] } {
+  const out = new Map<string, JupToken>();
+  const overlaid: string[] = [];
+  const missed: string[] = [];
+  for (const [mint, t] of index) {
+    const fresh = prices.get(mint);
+    if (fresh) {
+      out.set(mint, { ...t, usdPrice: fresh.usdPrice, liquidity: fresh.liquidity ?? t.liquidity });
+      overlaid.push(mint);
+    } else {
+      out.set(mint, t);
+      missed.push(mint);
+    }
+  }
+  return { index: out, overlaid, missed };
+}
+
 /** Which upstream an underlying quote came from. Carried on every row. */
 export type UnderSource = "finnhub" | "yahoo";
 

@@ -113,6 +113,17 @@ const JUP = [
 ];
 
 /**
+ * price/v3: a mint-keyed object, NOT the tag list's array. Prices here differ
+ * from JUP's on purpose so a test can prove which one reached the row. This is
+ * the cache-skew regression: the tag list is cached 10 minutes while the equity
+ * leg refreshes every 45s, so the token price must come from here.
+ */
+const JUP_PRICES: Record<string, { usdPrice: number; liquidity: number }> =
+  Object.fromEntries(
+    MINTS.map((m) => [m.mint, { usdPrice: 999.5, liquidity: m.liquidityUsd }]),
+  );
+
+/**
  * Real Finnhub quotes for the whole allowlist, captured in one pass. All 15
  * are covered on the free tier, ETFs included (SPY, QQQ, GLD).
  */
@@ -186,16 +197,22 @@ const header = (init?: RequestInit) =>
 const symOf = (u: unknown) => new URL(String(u)).searchParams.get("symbol") ?? "";
 const yahooSym = (u: unknown) => String(u).split("/chart/")[1]?.split("?")[0] ?? "";
 
-type Counts = { jupiter: number; quote: number; status: number; yahoo: number };
+type Counts = { jupiter: number; jupPrice: number; quote: number; status: number; yahoo: number };
 
 /**
  * A stub upstream. `over` replaces any leg with a canned Response, which is
  * how the failure cases are built.
  */
 function upstream(over: Partial<Record<keyof Counts, () => Response>> = {}) {
-  const counts: Counts = { jupiter: 0, quote: 0, status: 0, yahoo: 0 };
+  const counts: Counts = { jupiter: 0, jupPrice: 0, quote: 0, status: 0, yahoo: 0 };
   const fetchImpl = (async (u: string | URL) => {
     const url = String(u);
+    // price/v3 and the tag list share a host but are different endpoints with
+    // different shapes and different TTLs, so they are counted apart.
+    if (url.includes("/price/v3")) {
+      counts.jupPrice++;
+      return over.jupPrice ? over.jupPrice() : res(JUP_PRICES);
+    }
     if (url.includes("lite-api.jup.ag")) {
       counts.jupiter++;
       return over.jupiter ? over.jupiter() : res(JUP);
@@ -238,7 +255,10 @@ test("happy path: Finnhub prices the table, Yahoo is never touched", async () =>
   }
   const aapl = body.pairs.find((p) => p.sym === "AAPL")!;
   assert.equal(aapl.underPx, 333.27);
-  assert.equal(aapl.tokenPx, 332.9810802801566);
+  // The token price comes from price/v3, not from the 10-minute tag list. The
+  // tag list carries 332.98 for this mint; seeing that value here would mean
+  // the overlay was bypassed and the basis is measuring cache lag again.
+  assert.equal(aapl.tokenPx, 999.5);
   assert.equal(aapl.mint, "XsbEhLAtcf6HdfpFZ5xEMdqW8nfAvcsP5bdudRLJzJp");
   assert.equal(typeof aapl.bps, "number");
   assert.equal(typeof aapl.verdict, "string");
@@ -308,6 +328,7 @@ test("15 symbols per round, and a second poll inside the window spends nothing",
     assert.equal(counts.quote, MINTS.length, "a second poll re-fetched inside the round window");
     assert.equal(counts.status, 1, "market status re-fetched inside its TTL");
     assert.equal(counts.jupiter, 1, "the 5MB token list was re-fetched");
+    assert.equal(counts.jupPrice, 1, "price/v3 was re-fetched inside its 30s TTL");
   } finally {
     globalThis.fetch = realFetch;
   }
@@ -531,5 +552,42 @@ test("INVARIANT: every response is 200-with-pairs or a loud non-200", async () =
       healthy || loud,
       `${name}: HTTP ${status} pairs=${body.pairs.length} sources=${JSON.stringify(body.sources)} error=${body.error}`,
     );
+  }
+});
+
+// ---- cache-skew regression ------------------------------------------------
+// The tag list is cached for 10 minutes; the equity leg refreshes every 45s.
+// Pairing them directly made the basis measure lag, flipping the sign on 9 of
+// 15 rows and reading uniformly CHEAP into a rising market.
+
+test("the token price comes from price/v3, not the 10-minute tag list", async () => {
+  const { fetchImpl, counts } = upstream();
+  process.env.FINNHUB_API_KEY = TEST_KEY;
+  globalThis.fetch = fetchImpl;
+  try {
+    const mod = await import(`${ROUTE}?fresh=${counter++}`);
+    const body = await (await mod.GET()).json();
+    assert.equal(counts.jupPrice, 1, "price/v3 was never called");
+    for (const p of body.pairs) {
+      assert.equal(p.tokenPx, 999.5, `${p.sym} used the stale tag-list price`);
+    }
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("a price/v3 outage degrades to the tag-list price rather than emptying the table", async () => {
+  const { fetchImpl } = upstream({ jupPrice: () => new Response("nope", { status: 503 }) });
+  process.env.FINNHUB_API_KEY = TEST_KEY;
+  globalThis.fetch = fetchImpl;
+  try {
+    const mod = await import(`${ROUTE}?fresh=${counter++}`);
+    const r = await mod.GET();
+    const body = await r.json();
+    assert.equal(r.status, 200, "a price-refresh failure must not take the table down");
+    assert.ok(body.pairs.length > 0, "rows must survive on the stale-but-real tag price");
+    assert.ok(body.pairs.every((p: { tokenPx: number }) => p.tokenPx !== 999.5));
+  } finally {
+    globalThis.fetch = realFetch;
   }
 });

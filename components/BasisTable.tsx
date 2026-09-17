@@ -2,15 +2,20 @@
 
 import { useEffect, useState } from "react";
 import { LIQUIDITY_FLOOR_USD } from "@/lib/mints";
-import type { BasisPair, Unresolved } from "@/lib/quotes";
+import { UNDER_FRESH_SEC, type BasisPair, type Unresolved } from "@/lib/quotes";
 import { Badge, VerdictBadge } from "./Badge";
 import { SwapPanel, type SwapTarget } from "./SwapPanel";
 import styles from "./tier1.module.css";
 
-// Both legs are memoised server-side (Finnhub rounds at 45s, Jupiter's token
-// list at 10 minutes), so this cadence is about how fast a change surfaces,
-// not how often an upstream is hit. Each row states which read it got.
-const POLL_MS = 10_000;
+// Matches the Tier 2 cadence on this page, and is set by upstream budgets
+// rather than by taste. Yahoo is an IP-level bucket that answered 3 of 15
+// concurrent requests and locked the IP out for minutes; Finnhub's free tier is
+// 60 requests/minute; PreStocks, which the Tier 2 tables poll from the same
+// browser, 429s well inside 20s. The route memoises both legs, but a serverless
+// deploy runs several instances and a cold one starts with an empty memo, so
+// client cadence does reach the upstreams. 10s here would be a self-inflicted
+// outage. The cadence and the cache window are both stated on screen.
+const POLL_MS = 45_000;
 
 /**
  * The session answer, narrowed to the three fields rendered here. Structural on
@@ -69,6 +74,8 @@ export function BasisTable() {
   const [degraded, setDegraded] = useState<string[]>([]);
   const [marketStatus, setMarketStatus] = useState<MarketStatus | null>(null);
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
+  /** When rows last arrived. At a 45s cadence an outage needs a duration. */
+  const [lastGoodAt, setLastGoodAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [swap, setSwap] = useState<SwapTarget | null>(null);
@@ -106,6 +113,7 @@ export function BasisTable() {
 
         setError(null);
         setRows(feed?.pairs ?? []);
+        if ((feed?.pairs ?? []).length > 0) setLastGoodAt(feed?.fetchedAt ?? null);
       } catch (err) {
         if (cancelled) return;
         setLoading(false);
@@ -141,7 +149,9 @@ export function BasisTable() {
           <p className={styles.sub}>
             Each xStock against the listed share it tracks, widest gap first. Both legs are
             fetched server-side and every row names the upstream that produced each number.
-            Refreshed every {POLL_MS / 1000}s.
+            Polled every {POLL_MS / 1000}s; an underlying quote older than {UNDER_FRESH_SEC}s
+            is labelled <code>:cached</code> on its own row rather than passed off as a live
+            tick.
           </p>
         </div>
         <div className={styles.meta}>
@@ -181,6 +191,12 @@ export function BasisTable() {
               closed. Nothing below is a quote.
             </span>
             <span className={styles.errorDetail}>{error}</span>
+            {lastGoodAt && (
+              <span>
+                Last complete response was {clock(lastGoodAt)}. Those rows are withheld rather
+                than redrawn under a live clock; the next attempt is within {POLL_MS / 1000}s.
+              </span>
+            )}
           </span>
         </p>
       )}
@@ -224,7 +240,10 @@ export function BasisTable() {
               RICH (the token costs more than the share), negative is CHEAP, and anything
               inside 25 bps is FAIR. Liquidity is the DEX depth behind the token leg; below{" "}
               {usdWhole.format(LIQUIDITY_FLOOR_USD)} no action is offered, because slippage on
-              a thin pool eats a basis this size several times over.
+              a thin pool eats a basis this size several times over. The label under each
+              price is the upstream that produced it: a <code>:cached</code> suffix means that
+              leg was last read more than {UNDER_FRESH_SEC}s ago and is a memoised quote, not
+              this round&apos;s read, so the basis beside it is that stale too.
             </caption>
             <thead>
               <tr>
@@ -268,8 +287,8 @@ export function BasisTable() {
                         className={styles.leg}
                         title={
                           p.source.under.endsWith(":cached")
-                            ? "Served from the last good read, not fetched this round"
-                            : "Upstream that priced the underlying leg"
+                            ? `Memoised: last read more than ${UNDER_FRESH_SEC}s ago, not fetched this round`
+                            : `Upstream that priced the underlying leg, read within the last ${UNDER_FRESH_SEC}s`
                         }
                       >
                         {p.source.under}

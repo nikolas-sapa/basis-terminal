@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { MINTS } from "@/lib/mints";
 import {
+  type JupPrice,
+  parseJupPrices,
+  overlayPrices,
   indexJupiter,
   parseFinnhubQuote,
   parseMarketStatus,
@@ -62,6 +65,20 @@ const MISSING_KEY =
 /** The verified-tag payload is ~5MB and mints do not move. Memoise the index. */
 const JUPITER_TTL_MS = 10 * 60 * 1000;
 const JUPITER_TIMEOUT_MS = 20_000;
+/**
+ * Fresh token prices, overlaid on the 10-minute identity index.
+ *
+ * The tag list is ~5MB so it cannot be refetched often, but the equity leg
+ * refreshes every 45s. Pairing a 10-minute-old token price with a 45-second-old
+ * equity price made the basis measure cache lag rather than dislocation: the
+ * sign flipped on 9 of 15 rows and the table read uniformly CHEAP into a rising
+ * market. A uniformly-signed basis is the signature of staleness.
+ *
+ * price/v3 is ~8KB for 15 mints, so 30s is affordable and stays under the
+ * 45s round.
+ */
+const JUPITER_PRICE_URL = "https://lite-api.jup.ag/price/v3";
+const JUPITER_PRICE_TTL_MS = 30_000;
 const FINNHUB_TIMEOUT_MS = 8_000;
 const YAHOO_TIMEOUT_MS = 8_000;
 
@@ -149,6 +166,7 @@ class UpstreamError extends Error {
 // ---- module-scope memo ----------------------------------------------------
 
 let jupiterCache: { at: number; index: Map<string, JupToken> } | null = null;
+let jupiterPriceCache: { at: number; prices: Map<string, JupPrice> } | null = null;
 const underCache = new Map<string, UnderQuote>();
 
 let finnhubLastRoundAt = 0;
@@ -208,6 +226,39 @@ async function jupiterIndex(): Promise<Map<string, JupToken>> {
 
   jupiterCache = { at: Date.now(), index };
   return index;
+}
+
+/**
+ * Fresh prices for the allowlist mints only.
+ *
+ * Never throws. A failure here degrades to the tag-list price, which is stale
+ * but real; dropping the table because a price refresh failed would be a worse
+ * outcome than showing an older number that says how old it is.
+ */
+async function jupiterPrices(): Promise<{ prices: Map<string, JupPrice>; failure: string | null }> {
+  if (jupiterPriceCache && Date.now() - jupiterPriceCache.at < JUPITER_PRICE_TTL_MS) {
+    return { prices: jupiterPriceCache.prices, failure: null };
+  }
+  const ids = MINTS.map((m) => m.mint).join(",");
+  try {
+    const r = await fetch(`${JUPITER_PRICE_URL}?ids=${ids}`, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(JUPITER_TIMEOUT_MS),
+    });
+    if (!r.ok) {
+      const body = (await r.text().catch(() => "")).slice(0, 200);
+      const why = `jupiter price/v3 HTTP ${r.status} ${body}`.trim();
+      console.error(`[/api/basis] ${why}`);
+      return { prices: new Map(), failure: why };
+    }
+    const prices = parseJupPrices(await r.json());
+    jupiterPriceCache = { at: Date.now(), prices };
+    return { prices, failure: null };
+  } catch (e) {
+    const why = `jupiter price/v3 failed: ${e instanceof Error ? e.message : String(e)}`;
+    console.error(`[/api/basis] ${why}`);
+    return { prices: new Map(), failure: why };
+  }
 }
 
 // ---- underlying leg: Finnhub ----------------------------------------------
@@ -509,6 +560,13 @@ export async function GET() {
       operational ? (e as UpstreamError).status : 500,
     );
   }
+
+  // Layer fresh prices over the 10-minute identity index. Without this the
+  // basis subtracts a 45-second-old equity price from a token price up to ten
+  // minutes old, which measures cache lag, not dislocation.
+  const priced = await jupiterPrices();
+  const { index: jupFresh, missed } = overlayPrices(jup, priced.prices);
+  jup = jupFresh;
 
   const [finn, status] = await Promise.all([refreshFinnhub(nowSec), marketStatus()]);
   // Only ever fires for symbols Finnhub did not fill. See refreshYahoo.

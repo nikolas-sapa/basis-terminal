@@ -12,6 +12,9 @@ import {
   QUOTE_STALE_SEC,
   type MarketStatus,
   type UnderQuote,
+  parseJupPrices,
+  overlayPrices,
+  type JupToken,
 } from "./quotes.ts";
 import { MINTS, LIQUIDITY_FLOOR_USD } from "./mints.ts";
 
@@ -656,4 +659,68 @@ test("switching the underlying source changes no mint and invents no row", () =>
     assert.ok(p.underPx > 0 && p.tokenPx > 0);
   }
   assert.equal(pairs.length + unresolved.length, MINTS.length);
+});
+
+// ---- price/v3 overlay -----------------------------------------------------
+// Regression cover for the cache-skew defect: the ~5MB tag list is cached for
+// 10 minutes while the equity leg refreshes every 45s, so token prices must be
+// refreshed independently or the basis measures lag instead of dislocation.
+
+const P3 = {
+  XsbEhLAtcf6HdfpFZ5xEMdqW8nfAvcsP5bdudRLJzJp: { usdPrice: 333.5, liquidity: 720000 },
+  XsDoVfqeBukxuZHWhdvWHBhgEHjGNst4MLodqsJHzoB: { usdPrice: 362.1, liquidity: 1250000 },
+};
+
+const tagIndex = () =>
+  new Map<string, JupToken>([
+    ["XsbEhLAtcf6HdfpFZ5xEMdqW8nfAvcsP5bdudRLJzJp", { mint: "XsbEhLAtcf6HdfpFZ5xEMdqW8nfAvcsP5bdudRLJzJp", symbol: "AAPLx", name: "Apple xStock", usdPrice: 300, liquidity: 1, isVerified: true }],
+    ["XsDoVfqeBukxuZHWhdvWHBhgEHjGNst4MLodqsJHzoB", { mint: "XsDoVfqeBukxuZHWhdvWHBhgEHjGNst4MLodqsJHzoB", symbol: "TSLAx", name: "Tesla xStock", usdPrice: 300, liquidity: 1, isVerified: true }],
+    ["XsEH7wWfJJu2ZT3UCFeVfALnVA6CP5ur7Ee11KmzVpL", { mint: "XsEH7wWfJJu2ZT3UCFeVfALnVA6CP5ur7Ee11KmzVpL", symbol: "NFLXx", name: "Netflix xStock", usdPrice: 75, liquidity: 3197, isVerified: true }],
+  ]);
+
+test("parseJupPrices reads the mint-keyed object", () => {
+  const m = parseJupPrices(P3);
+  assert.equal(m.size, 2);
+  assert.equal(m.get("XsbEhLAtcf6HdfpFZ5xEMdqW8nfAvcsP5bdudRLJzJp")?.usdPrice, 333.5);
+});
+
+test("parseJupPrices rejects an array, which is the tag list's shape", () => {
+  assert.throws(() => parseJupPrices([{ id: "Xs1", usdPrice: 1 }]), /expected an object keyed by mint/);
+});
+
+test("parseJupPrices drops zero and missing prices rather than shipping them", () => {
+  const m = parseJupPrices({ A: { usdPrice: 0 }, B: { usdPrice: null }, C: {}, D: { usdPrice: 5 } });
+  assert.deepEqual([...m.keys()], ["D"]);
+});
+
+test("overlayPrices replaces the stale price and keeps identity intact", () => {
+  const { index, overlaid } = overlayPrices(tagIndex(), parseJupPrices(P3));
+  const aapl = index.get("XsbEhLAtcf6HdfpFZ5xEMdqW8nfAvcsP5bdudRLJzJp");
+  assert.equal(aapl?.usdPrice, 333.5, "price must come from price/v3");
+  assert.equal(aapl?.symbol, "AAPLx", "symbol must survive: price/v3 carries none");
+  assert.equal(aapl?.isVerified, true, "isVerified must survive: it gates the swap control");
+  assert.equal(overlaid.length, 2);
+});
+
+test("a mint absent from price/v3 keeps its tag-list price instead of vanishing", () => {
+  const { index, missed } = overlayPrices(tagIndex(), parseJupPrices(P3));
+  assert.deepEqual(missed, ["XsEH7wWfJJu2ZT3UCFeVfALnVA6CP5ur7Ee11KmzVpL"]);
+  assert.equal(index.get("XsEH7wWfJJu2ZT3UCFeVfALnVA6CP5ur7Ee11KmzVpL")?.usdPrice, 75);
+  assert.equal(index.size, 3, "no row may be dropped by the overlay");
+});
+
+test("overlayPrices does not mutate the cached identity index", () => {
+  const original = tagIndex();
+  overlayPrices(original, parseJupPrices(P3));
+  assert.equal(
+    original.get("XsbEhLAtcf6HdfpFZ5xEMdqW8nfAvcsP5bdudRLJzJp")?.usdPrice,
+    300,
+    "mutating the 10-minute cache would poison every later request",
+  );
+});
+
+test("fresh liquidity overrides the snapshot, so drained depth closes the swap", () => {
+  const drained = parseJupPrices({ XsEH7wWfJJu2ZT3UCFeVfALnVA6CP5ur7Ee11KmzVpL: { usdPrice: 75, liquidity: 12 } });
+  const { index } = overlayPrices(tagIndex(), drained);
+  assert.equal(index.get("XsEH7wWfJJu2ZT3UCFeVfALnVA6CP5ur7Ee11KmzVpL")?.liquidity, 12);
 });
