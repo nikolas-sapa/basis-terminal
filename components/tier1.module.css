@@ -501,6 +501,14 @@
     width: auto;
   }
 
+  /* A caption inside a display:block table loses its full-width behaviour and
+     collapses to a narrow column, one word per line. Restate it explicitly. */
+  .table caption {
+    display: block;
+    width: 100%;
+    max-width: none;
+  }
+
   .table tr {
     border: 1px solid var(--line);
     border-radius: 10px;
