@@ -42,6 +42,20 @@ So mints are resolved by address from a committed allowlist, never by symbol loo
 
 **Liquidity floor.** 839 xStocks exist; 21 clear $100k of liquidity and 794 sit under $1k. A swap control on a $200-depth token is a rug by slippage, not a trade. Below the floor a row still shows its basis but is offered no action, and every row displays its depth. The check runs against live liquidity as well as the committed snapshot, so drained depth removes the swap control without a redeploy.
 
+**The basis is two things, and only one is tradeable.** An xStock is a wrapper: the issuer publishes its own NAV, and the pool trades around that NAV. So a DEX-vs-equity gap is pool drift plus issuer tracking error added together, and a swap on this page can only capture the first.
+
+Jupiter's `price/v3` already carries the issuer mark, so the split costs nothing. It changes what the table means:
+
+```
+         basis    vs NAV   NAV vs share
+GOOGL       -9       -46            +38
+GLD        -13      -287              0
+```
+
+GOOGL's combined basis is -9 bps and looks like nothing. Split apart, the pool sits 46 bps under NAV while the issuer sits 38 over the share, and the halves nearly cancel. A single number would have hidden a real dislocation, not just overstated one. GLDx is the opposite case: the issuer tracked the share exactly while the pool sat 2.9% below it, so the whole gap was capturable.
+
+Measured across all fifteen, tracking error averages 18 bps while pool drift averages 38. The wrapper does its job; the pool is where the gap lives.
+
 **Fresh prices on both legs, which is harder than it sounds.** Jupiter's verified-token list is ~5MB, so it is cached for ten minutes; the equity leg refreshes every 45 seconds. Subtracting a ten-minute-old token price from a 45-second-old equity price produces a basis that measures cache lag rather than dislocation. It read convincingly: fifteen plausible rows, mean -69 bps, NFLX at -215 bps.
 
 It was wrong. Token prices now come from `price/v3` on a 30-second TTL, overlaid on the cached list for identity only, and the same table reads mean -13 bps with NFLX at -5. The sign had been flipping on 9 of 15 rows.
