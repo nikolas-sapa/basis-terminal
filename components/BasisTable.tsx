@@ -389,7 +389,7 @@ export function BasisTable() {
                         )}
                       </span>
                     </td>
-                    <td className={styles.action}>
+                    <td className={styles.action} data-label="Action">
                       {p.tradeable ? (
                         <button
                           type="button"
