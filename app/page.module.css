@@ -10,7 +10,11 @@
   flex-direction: column;
   gap: 32px;
   width: 100%;
-  max-width: 1040px;
+  /* Wide enough that the Tier 1 table fits without sideways scrolling. The
+     basis decomposition added two columns (1103px of table); at the previous
+     1040px cap the Action column sat behind a horizontal scrollbar, so the one
+     control a visitor is meant to use was effectively hidden. */
+  max-width: 1200px;
 }
 
 .masthead {
