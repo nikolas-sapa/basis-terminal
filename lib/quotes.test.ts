@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { bps } from "./basis.ts";
 import {
   indexJupiter,
   parseFinnhubQuote,
@@ -723,4 +724,36 @@ test("fresh liquidity overrides the snapshot, so drained depth closes the swap",
   const drained = parseJupPrices({ XsEH7wWfJJu2ZT3UCFeVfALnVA6CP5ur7Ee11KmzVpL: { usdPrice: 75, liquidity: 12 } });
   const { index } = overlayPrices(tagIndex(), drained);
   assert.equal(index.get("XsEH7wWfJJu2ZT3UCFeVfALnVA6CP5ur7Ee11KmzVpL")?.liquidity, 12);
+});
+
+// ---- basis decomposition --------------------------------------------------
+// A DEX-vs-equity gap is two things summed: pool drift from the issuer's NAV
+// (tradeable) and issuer tracking error (not). Measured live, tracking error
+// is near zero and pool drift carries nearly all of it, so a single number
+// overstates what a swap could capture.
+
+test("parseJupPrices reads the issuer mark out of stockData", () => {
+  const m = parseJupPrices({
+    Xs1: { usdPrice: 389.67, liquidity: 5, stockData: { price: 401.17, updatedAt: "2026-09-19T03:55:56.657Z" } },
+  });
+  const e = m.get("Xs1")!;
+  assert.equal(e.issuerPx, 401.17);
+  assert.equal(e.issuerAt, "2026-09-19T03:55:56.657Z");
+});
+
+test("a token with no stockData yields null, never zero", () => {
+  const m = parseJupPrices({ Xs1: { usdPrice: 10 } });
+  assert.equal(m.get("Xs1")!.issuerPx, null, "zero would read as a real NAV of $0");
+  assert.equal(m.get("Xs1")!.issuerAt, null);
+});
+
+test("the decomposition splits GLD's real numbers correctly", () => {
+  // Live 2026-09-19: DEX 389.67, issuer 401.17, equity 401.17. The issuer
+  // tracked the share exactly while the pool sat 2.9% under it, so the whole
+  // gap was tradeable pool drift and none of it was tracking error.
+  const dexVsIssuer = bps(389.67, 401.17);
+  const issuerVsEquity = bps(401.17, 401.17);
+  assert.equal(dexVsIssuer, -287);
+  assert.equal(issuerVsEquity, 0);
+  assert.ok(Math.abs(bps(389.67, 401.17) - dexVsIssuer) < 2, "halves must reconcile to the whole");
 });

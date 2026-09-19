@@ -48,6 +48,9 @@ export type JupToken = {
   /** Reported DEX liquidity in USD. `null` when Jupiter omits it. */
   liquidity: number | null;
   isVerified: boolean;
+  /** Issuer NAV, present only once the price overlay has run. */
+  issuerPx?: number | null;
+  issuerAt?: string | null;
 };
 
 /**
@@ -65,7 +68,24 @@ export type JupToken = {
  * list rather than replacing it. Replacing it would delete both the impostor
  * defence and the swap gate.
  */
-export type JupPrice = { usdPrice: number; liquidity: number | null };
+export type JupPrice = {
+  usdPrice: number;
+  liquidity: number | null;
+  /**
+   * The issuer's own reference price for the xStock, from `stockData.price`.
+   *
+   * This is the third price in the system and it is what makes a basis
+   * interpretable. A gap between the DEX and the underlying equity is two
+   * different things added together: how far the pool has drifted from the
+   * issuer's NAV, and how well the issuer tracks the real share. Only the
+   * first is tradeable. Measured live, issuer-vs-equity sits near zero across
+   * the board while DEX-vs-issuer carries almost the entire gap, so without
+   * this split every row overstates what a trade could capture.
+   */
+  issuerPx: number | null;
+  /** When the issuer last republished. A stale mark is not a NAV. */
+  issuerAt: string | null;
+};
 
 /** Parse `price/v3`, which is an object keyed by mint, not an array. */
 export function parseJupPrices(payload: unknown): Map<string, JupPrice> {
@@ -79,7 +99,13 @@ export function parseJupPrices(payload: unknown): Map<string, JupPrice> {
     const e = v as Record<string, unknown> | null;
     const usdPrice = num(e?.usdPrice);
     if (usdPrice === null || usdPrice <= 0) continue;
-    out.set(mint, { usdPrice, liquidity: num(e?.liquidity) });
+    const sd = (e?.stockData ?? null) as Record<string, unknown> | null;
+    out.set(mint, {
+      usdPrice,
+      liquidity: num(e?.liquidity),
+      issuerPx: num(sd?.price),
+      issuerAt: typeof sd?.updatedAt === "string" ? sd.updatedAt : null,
+    });
   }
   return out;
 }
@@ -101,7 +127,13 @@ export function overlayPrices(
   for (const [mint, t] of index) {
     const fresh = prices.get(mint);
     if (fresh) {
-      out.set(mint, { ...t, usdPrice: fresh.usdPrice, liquidity: fresh.liquidity ?? t.liquidity });
+      out.set(mint, {
+        ...t,
+        usdPrice: fresh.usdPrice,
+        liquidity: fresh.liquidity ?? t.liquidity,
+        issuerPx: fresh.issuerPx,
+        issuerAt: fresh.issuerAt,
+      });
       overlaid.push(mint);
     } else {
       out.set(mint, t);
@@ -167,6 +199,19 @@ export type BasisPair = {
   liquidityUsd: number;
   tradeable: boolean;
   source: { token: string; under: string };
+  /** Issuer NAV for the token, when the issuer published one. */
+  issuerPx: number | null;
+  issuerAt: string | null;
+  /**
+   * The tradeable half: how far the DEX pool sits from the issuer's own NAV.
+   * This is the part a swap can actually capture.
+   */
+  dexVsIssuerBps: number | null;
+  /**
+   * The other half: how well the issuer tracks the real share. Near zero in
+   * practice, and not something a swap on this venue can act on.
+   */
+  issuerVsEquityBps: number | null;
 };
 
 export type Unresolved = { sym: string; reason: string };
@@ -528,6 +573,13 @@ export function buildBasisPairs(
         // while the leg is down is the failure this field exists to prevent.
         under: nowSec - u.fetchedAt > UNDER_FRESH_SEC ? `${u.provider}:cached` : u.provider,
       },
+      issuerPx: t.issuerPx ?? null,
+      issuerAt: t.issuerAt ?? null,
+      // Split the gap into the half a swap can capture and the half it cannot.
+      // Null rather than zero when the issuer published nothing: a missing
+      // decomposition must read as unknown, never as "no difference".
+      dexVsIssuerBps: t.issuerPx ? bps(t.usdPrice, t.issuerPx) : null,
+      issuerVsEquityBps: t.issuerPx ? bps(t.issuerPx, u.px) : null,
     });
   }
 

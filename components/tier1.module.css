@@ -466,3 +466,9 @@
 .dotIdle {
   background: var(--muted);
 }
+
+/* The DEX-vs-NAV column is the only number on the row a swap can actually
+   capture, so it reads heavier than the combined basis beside it. */
+.tradeableHalf {
+  font-weight: 600;
+}

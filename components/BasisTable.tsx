@@ -261,7 +261,14 @@ export function BasisTable() {
               a thin pool eats a basis this size several times over. The label under each
               price is the upstream that produced it: a <code>:cached</code> suffix means that
               leg was last read more than {UNDER_FRESH_SEC}s ago and is a memoised quote, not
-              this round&apos;s read, so the basis beside it is that stale too.
+              this round&apos;s read, so the basis beside it is that stale too.{" "}
+              <strong>The basis is two different things added together.</strong> An xStock is
+              a wrapper: the issuer publishes its own NAV for the token, and the pool trades
+              around that NAV. <em>vs NAV</em> is how far the pool has drifted from it, and is
+              the only part a swap on this page can capture. <em>NAV vs share</em> is how well
+              the issuer tracks the real stock, which sits near zero in practice and which no
+              trade here can act on. A wide combined basis made mostly of tracking error is
+              not an opportunity, so the halves are shown separately rather than summed.
             </caption>
             <thead>
               <tr>
@@ -274,6 +281,12 @@ export function BasisTable() {
                 </th>
                 <th scope="col" className={styles.num}>
                   Basis (bps)
+                </th>
+                <th scope="col" className={styles.num} title="The half of the basis a swap can capture: how far the DEX pool sits from the issuer's own NAV">
+                  vs NAV
+                </th>
+                <th scope="col" className={styles.num} title="The half a swap cannot capture: how well the issuer tracks the real share">
+                  NAV vs share
                 </th>
                 <th scope="col">Verdict</th>
                 <th scope="col" className={styles.num}>
@@ -316,6 +329,28 @@ export function BasisTable() {
                       className={`${styles.num} ${p.bps > 0 ? styles.rich : p.bps < 0 ? styles.cheap : ""}`}
                     >
                       {signedBps(p.bps)}
+                    </td>
+                    {/* The tradeable half. Bold because it is the only number
+                        on this row a swap can act on. */}
+                    <td
+                      className={`${styles.num} ${styles.tradeableHalf}`}
+                      title={
+                        p.issuerPx === null
+                          ? "The issuer published no NAV for this token, so the basis cannot be split"
+                          : `Pool is ${signedBps(p.dexVsIssuerBps ?? 0)} bps from the issuer NAV of ${usd.format(p.issuerPx)}`
+                      }
+                    >
+                      {p.dexVsIssuerBps === null ? "—" : signedBps(p.dexVsIssuerBps)}
+                    </td>
+                    <td
+                      className={styles.num}
+                      title={
+                        p.issuerPx === null
+                          ? "No issuer NAV published"
+                          : "Issuer tracking error against the real share. Near zero means the wrapper is doing its job; a swap cannot capture this."
+                      }
+                    >
+                      {p.issuerVsEquityBps === null ? "—" : signedBps(p.issuerVsEquityBps)}
                     </td>
                     <td>
                       <VerdictBadge verdict={p.verdict} bps={p.bps} />
