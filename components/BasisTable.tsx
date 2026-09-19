@@ -306,13 +306,13 @@ export function BasisTable() {
                       {p.sym}
                       <span className={styles.symbol}>{p.tokenSym}</span>
                     </th>
-                    <td className={styles.num}>
+                    <td className={styles.num} data-label="Token price">
                       {usd.format(p.tokenPx)}
                       <span className={styles.leg} title="Upstream that priced the token leg">
                         {p.source.token}
                       </span>
                     </td>
-                    <td className={styles.num}>
+                    <td className={styles.num} data-label="Underlying">
                       {usd.format(p.underPx)}
                       <span
                         className={styles.leg}
@@ -326,6 +326,7 @@ export function BasisTable() {
                       </span>
                     </td>
                     <td
+                      data-label="Basis (bps)"
                       className={`${styles.num} ${p.bps > 0 ? styles.rich : p.bps < 0 ? styles.cheap : ""}`}
                     >
                       {signedBps(p.bps)}
@@ -333,6 +334,7 @@ export function BasisTable() {
                     {/* The tradeable half. Bold because it is the only number
                         on this row a swap can act on. */}
                     <td
+                      data-label="vs NAV"
                       className={`${styles.num} ${styles.tradeableHalf}`}
                       title={
                         p.issuerPx === null
@@ -343,6 +345,7 @@ export function BasisTable() {
                       {p.dexVsIssuerBps === null ? "—" : signedBps(p.dexVsIssuerBps)}
                     </td>
                     <td
+                      data-label="NAV vs share"
                       className={styles.num}
                       title={
                         p.issuerPx === null
@@ -352,16 +355,17 @@ export function BasisTable() {
                     >
                       {p.issuerVsEquityBps === null ? "—" : signedBps(p.issuerVsEquityBps)}
                     </td>
-                    <td>
+                    <td data-label="Verdict">
                       <VerdictBadge verdict={p.verdict} bps={p.bps} />
                     </td>
                     <td
+                      data-label="Liquidity"
                       className={styles.num}
                       title={`${usdWhole.format(p.liquidityUsd)} of reported DEX depth behind ${p.tokenSym}`}
                     >
                       {usdCompact.format(p.liquidityUsd)}
                     </td>
-                    <td>
+                    <td data-label="Market state">
                       <span className={styles.state}>
                         {p.marketOpen ? (
                           <Badge tone="accent" dot title="Regular US session, live prints">
