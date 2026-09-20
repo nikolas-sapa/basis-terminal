@@ -541,4 +541,12 @@
     justify-content: flex-end;
     padding-top: 10px;
   }
+
+  /* 44px is the minimum reliable touch target (WCAG 2.5.5, Apple HIG). The
+     desktop button is 30px tall, which is fine for a cursor and too small for
+     a thumb, and this is the only control on the page. */
+  .table td button {
+    min-height: 44px;
+    padding-inline: 18px;
+  }
 }
