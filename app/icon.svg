@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!--
+    The mark is the product: two prices for the same thing, at different
+    levels, with the gap between them called out. Accent #006bff per the
+    design system; no emoji, no lettering that would vanish at 16px.
+  -->
+  <rect width="32" height="32" rx="7" fill="#0a0a0a"/>
+  <!-- underlying: the real share, the reference line -->
+  <rect x="6" y="19" width="20" height="2.5" rx="1.25" fill="#8a8a8a"/>
+  <!-- token: trading above it, the gap is the basis -->
+  <rect x="6" y="10" width="20" height="2.5" rx="1.25" fill="#006bff"/>
+  <!-- the gap itself -->
+  <rect x="15" y="12.5" width="2" height="6.5" rx="1" fill="#006bff" opacity="0.45"/>
+</svg>
