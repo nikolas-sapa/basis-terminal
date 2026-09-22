@@ -57,7 +57,11 @@ function LivenessBadge({ state, count }: { state: Liveness; count: number }) {
         className={`${styles.dot} ${state === "LIVE" ? styles.pulse : ""}`}
         aria-hidden="true"
       />
-      {state}
+      {/* Show the sample count while the window is still filling. A bare
+          "CHECKING" for the ~135s the three polls take reads as a stuck
+          column; "1/3" reads as a measurement in progress, which is what it
+          is. The verdict still waits for the full window. */}
+      {state === "CHECKING" ? `CHECKING ${count}/${SAMPLE_WINDOW}` : state}
     </span>
   );
 }
