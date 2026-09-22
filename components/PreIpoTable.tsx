@@ -141,7 +141,7 @@ export function PreIpoTable() {
             <SourceChip name="PreStocks" up={sources?.prestocks ?? null} />
             <SourceChip name="Tessera" up={sources?.tessera ?? null} />
           </div>
-          <span className={styles.stamp}>
+          <span className={styles.stamp} aria-live="polite" aria-atomic="true">
             {fetchedAt ? `fetched ${clock(fetchedAt)}` : "fetching…"}
           </span>
         </div>

@@ -194,7 +194,12 @@ export function BasisTable() {
               ))}
             </div>
           )}
-          <span className={styles.stamp}>
+          {/* The table silently replaces every number every 45s. Without a
+              polite live region a screen-reader user is never told the page
+              changed under them, which on a price display is the difference
+              between a stale reading and a current one. Polite, not assertive:
+              a refresh should not interrupt whatever is being read. */}
+          <span className={styles.stamp} aria-live="polite" aria-atomic="true">
             {fetchedAt ? `fetched ${clock(fetchedAt)}` : "fetching…"}
           </span>
         </div>
