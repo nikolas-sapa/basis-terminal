@@ -294,3 +294,63 @@
     padding: 8px 10px;
   }
 }
+
+/*
+ * Same stacked treatment as Tier 1. Without it the pre-IPO and cross-venue
+ * tables scrolled sideways inside a 324px wrapper on a phone (547px and 527px
+ * of content), so half the product was unreadable on mobile while the other
+ * half had already been fixed.
+ */
+@media (max-width: 900px) {
+  .table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .table,
+  .table tbody,
+  .table tr,
+  .table th,
+  .table td {
+    display: block;
+    width: auto;
+  }
+
+  /* display:block strips a caption's full-width behaviour and collapses it to
+     a one-word column. */
+  .table caption {
+    display: block;
+    width: 100%;
+    max-width: none;
+  }
+
+  .table tr {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin-bottom: 12px;
+  }
+
+  .table td {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 16px;
+    padding: 6px 0;
+    text-align: right;
+  }
+
+  .table td::before {
+    content: attr(data-label);
+    color: var(--muted);
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    text-align: left;
+    flex: 0 0 auto;
+  }
+}

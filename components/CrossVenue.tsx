@@ -167,11 +167,11 @@ export function CrossVenue() {
                   <th scope="row" className={styles.company}>
                     {r.company}
                   </th>
-                  <td className={styles.num}>{val.format(r.tesseraValuation)}</td>
-                  <td className={styles.num}>{val.format(r.prestocksValuation)}</td>
+                  <td className={styles.num} data-label="Tessera mark valuation">{val.format(r.tesseraValuation)}</td>
+                  <td className={styles.num} data-label="PreStocks mark valuation">{val.format(r.prestocksValuation)}</td>
                   {/* Uncoloured on purpose: a red/green spread would read as a
                       trade direction, and there is no position to take here. */}
-                  <td className={styles.num}>{pct(r.spreadPct)}</td>
+                  <td className={styles.num} data-label="Spread">{pct(r.spreadPct)}</td>
                 </tr>
               ))}
             </tbody>

@@ -195,14 +195,15 @@ export function PreIpoTable() {
                       {r.company}
                       <span className={styles.symbol}>{r.symbol}</span>
                     </th>
-                    <td className={styles.num}>{usd.format(r.markPx)}</td>
-                    <td className={styles.num}>{usd.format(r.tokenPx)}</td>
+                    <td className={styles.num} data-label="Mark">{usd.format(r.markPx)}</td>
+                    <td className={styles.num} data-label="Token price">{usd.format(r.tokenPx)}</td>
                     <td
+                      data-label="Premium %"
                       className={`${styles.num} ${r.premiumPct > 0 ? styles.rich : r.premiumPct < 0 ? styles.cheap : ""}`}
                     >
                       {pct(r.premiumPct)}
                     </td>
-                    <td>
+                    <td data-label="Liveness">
                       <LivenessBadge state={liveness(seen)} count={seen.length} />
                     </td>
                   </tr>
