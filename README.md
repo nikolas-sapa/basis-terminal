@@ -12,9 +12,9 @@ This distinction is the product, and conflating the two would be misleading.
 
 **Tier 1 — tradeable basis (listed equities).** An xStock token's on-chain price against its underlying equity. The gap is real, live, and actionable. These rows get a swap control, routed through Jupiter.
 
-**Tier 2 — relative value (pre-IPO).** A PreStocks token against its own NAV mark, plus the implied-valuation spread between Tessera and PreStocks for names listed on both. **No swap control, ever.** These tokens are issued by separate entities into separate Cayman SPVs, are not convertible into one another, have no date on which their prices must converge, and represent different fractions of a share so there isn't even a hedge ratio. Calling that arbitrage would be wrong.
+**Tier 2 — relative value (pre-IPO).** A PreStocks token against that venue's own NAV mark. **No swap control, ever.** A premium here is not a tradeable basis: the mark is a reference the operator publishes, not a second venue you can settle against, so there is nothing to arbitrage and the table carries no action.
 
-That constraint is enforced in code, not by convention: `crossVenue()` returns rows carrying no mint and no price, and a test asserts the exact key set so a swap button cannot be wired to Tier 2 data even by accident.
+That constraint is enforced in code, not by convention. A guard test asserts that the Tier 2 component contains no swap machinery at all, and it is verified failable: adding a swap import to that file turns it red.
 
 ## Data sources
 
@@ -23,10 +23,15 @@ That constraint is enforced in code, not by convention: `crossVenue()` returns r
 | Jupiter | On-chain token price, liquidity, verified mint | Yes |
 | Yahoo Finance | Underlying equity price | Yes |
 | PreStocks | Pre-IPO mark and traded price, 8 companies | Yes |
-| Tessera | Pre-IPO reference mark, 3 companies | Yes |
 | Pyth | Underlying equity price for TSLA and QQQ | Requires entitled key |
 
 Pyth is a labeled enhancement, not a dependency. Public Hermes closed on 2026-08-26 and now requires an API key; a free trial grants 3 equity feeds and **zero** tokenized feeds, so Pyth cannot produce a complete basis row on its own. The keyless path serves all pairs and does not expire.
+
+## A note on scope
+
+This project originally compared PreStocks marks against Tessera's for the three companies listed on both. That was removed before submission: the PreStocks bounty states that *"projects that integrate any non-PreStocks pre-IPO tokens will be ineligible for this bounty."*
+
+The cross-venue comparison was the thinner half of the pre-IPO work anyway. It read two Tessera numbers and compared them; the PreStocks side is where the actual product is, with premium-to-NAV across eight companies, a disclosed liveness window, and stated provenance. Cutting it sharpened the section rather than hollowing it out.
 
 ## Honesty features
 

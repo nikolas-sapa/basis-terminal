@@ -1,5 +1,5 @@
 /* Shared styling for the three Tier 2 (pre-IPO) surfaces: PreIpoTable,
-   CrossVenue and Provenance. One module, because the three read as a single
+   and Provenance. One module, because the two read as a single
    block on the page and share a table skin. */
 
 .section {

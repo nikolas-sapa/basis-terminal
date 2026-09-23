@@ -290,3 +290,27 @@ with `regularMarketTime` freshness. No hand-rolled timezone handling anywhere.
 relative-luminance calculation. Replaced with lighter foreground variants
 (`--rich-fg #ff6166` and a matching green) measured at 7.1:1 and 10.1:1.
 Accessibility is not a shortcut this project takes.
+
+
+---
+
+## Amendment 4, 2026-09-22: Tessera removed for bounty eligibility
+
+The PreStocks bounty carries an exclusivity clause: "projects that integrate any
+non-PreStocks pre-IPO tokens will be ineligible for this bounty." Basis
+integrated both, which forfeited the larger pool.
+
+The numbers decided it. PreStocks is $10k across three places (1st $5k, 2nd $3k,
+3rd $2k) and our integration is deep: eight companies, premium against the
+venue's own mark, liveness with a disclosed sampling window, stated provenance.
+Tessera is $6k with no published split, and our integration was three tokens
+used as a valuation reference, not a product built on T-Tokens, which is what
+that brief actually asks for. Bigger pool, more places, far better fit.
+
+Removed: `crossVenue()`, `TESSERA_NAME_MAP`, `TesseraRaw`, `CrossRow`, the
+Tessera upstream fetch, the `CrossVenue` component, the Tessera provenance
+footnote and source chip, and five tests. `sources` is now `{prestocks}` alone.
+
+The T6 honesty guard still holds. `PreIpoTable` is now the only Tier 2 surface
+and the rule it must satisfy is unchanged; the guard's file list was narrowed
+rather than weakened.

@@ -1,5 +1,4 @@
 import { BasisTable } from "@/components/BasisTable";
-import { CrossVenue } from "@/components/CrossVenue";
 import { PreIpoTable } from "@/components/PreIpoTable";
 import { Provenance } from "@/components/Provenance";
 import styles from "./page.module.css";
@@ -22,7 +21,6 @@ export default function Home() {
         <BasisTable />
 
         <PreIpoTable />
-        <CrossVenue />
         <Provenance />
       </main>
     </div>

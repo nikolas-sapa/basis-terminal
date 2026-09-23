@@ -14,7 +14,7 @@ import styles from "./tier2.module.css";
 const POLL_MS = 45_000;
 const SAMPLE_WINDOW = 3;
 
-type Sources = { prestocks: boolean; tessera: boolean };
+type Sources = { prestocks: boolean };
 type Feed = { rows: PreIpoRow[]; sources: Sources; fetchedAt: string };
 
 type Liveness = "LIVE" | "STATIC" | "CHECKING";
@@ -139,7 +139,6 @@ export function PreIpoTable() {
         <div className={styles.meta}>
           <div className={styles.sources}>
             <SourceChip name="PreStocks" up={sources?.prestocks ?? null} />
-            <SourceChip name="Tessera" up={sources?.tessera ?? null} />
           </div>
           <span className={styles.stamp} aria-live="polite" aria-atomic="true">
             {fetchedAt ? `fetched ${clock(fetchedAt)}` : "fetching…"}

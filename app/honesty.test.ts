@@ -28,7 +28,9 @@ import { fileURLToPath } from "node:url";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (rel: string) => readFileSync(join(ROOT, rel), "utf8");
 
-const TIER2 = ["components/PreIpoTable.tsx", "components/CrossVenue.tsx"];
+// CrossVenue was removed with the Tessera integration; PreIpoTable is now the
+// only Tier 2 surface, and the rule it must satisfy is unchanged.
+const TIER2 = ["components/PreIpoTable.tsx"];
 const BANNED = ["SwapPanel", "Jupiter", "onSwap", "initialOutputMint"];
 
 const COMPONENTS = readdirSync(join(ROOT, "components"))

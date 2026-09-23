@@ -1,10 +1,9 @@
 import styles from "./tier2.module.css";
 
-// Verbatim from the spec's provenance section. These two sentences are the only
-// honest thing that can be said about where Tier 2 marks come from, and they are
-// the reason no row above carries an action.
+// Verbatim from the spec's provenance section. This is the only honest thing
+// that can be said about where the Tier 2 mark comes from, and it is the reason
+// no row above carries an action.
 const NOTES = [
-  "Tessera marks are hand-set and did not move across repeated polling; Tessera's own proof-of-reserve publishes asset counts, explicitly not dollar valuations, attested approximately monthly.",
   "PreStocks marks update automatically from a source the operator does not document.",
 ];
 
@@ -44,7 +43,7 @@ export function Provenance() {
           </span>
           <span>
             Sources: <code>prestocks.com/api/prestocks</code> and{" "}
-            <code>rest-api.tessera.pe/v1/public/token-details</code>, both fetched server-side.
+fetched server-side.
           </span>
         </li>
       </ul>

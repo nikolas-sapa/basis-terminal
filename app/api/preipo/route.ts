@@ -1,9 +1,8 @@
 import { NextResponse } from "next/server";
-import { normalizePreStocks, crossVenue } from "@/lib/preipo";
-import type { PreStocksRaw, TesseraRaw } from "@/lib/preipo";
+import { normalizePreStocks } from "@/lib/preipo";
+import type { PreStocksRaw } from "@/lib/preipo";
 
 const PRESTOCKS = "https://prestocks.com/api/prestocks";
-const TESSERA = "https://rest-api.tessera.pe/v1/public/token-details";
 
 export const revalidate = 0;
 
@@ -30,15 +29,11 @@ async function fetchArray<T>(url: string): Promise<{ data: T[]; ok: boolean; sta
 }
 
 export async function GET() {
-  const [ps, te] = await Promise.all([
-    fetchArray<PreStocksRaw>(PRESTOCKS),
-    fetchArray<TesseraRaw>(TESSERA),
-  ]);
+  const ps = await fetchArray<PreStocksRaw>(PRESTOCKS);
 
   return NextResponse.json({
     rows: normalizePreStocks(ps.data).sort((a, b) => Math.abs(b.premiumPct) - Math.abs(a.premiumPct)),
-    crossVenue: crossVenue(ps.data, te.data),
-    sources: { prestocks: ps.ok, tessera: te.ok },
+    sources: { prestocks: ps.ok },
     fetchedAt: new Date().toISOString(),
   });
 }
