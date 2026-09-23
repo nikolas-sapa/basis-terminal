@@ -45,7 +45,7 @@ Restricting to the verified set removes those, but introduces a subtler problem:
 
 So mints are resolved by address from a committed allowlist, never by symbol lookup, and guard tests reject any address that isn't `Xs`-prefixed. Authentic xStocks use a lowercase `x` suffix; Pyth names the same assets in uppercase, so case carries no meaning across systems.
 
-**Liquidity floor.** 839 xStocks exist; 21 clear $100k of liquidity and 794 sit under $1k. A swap control on a $200-depth token is a rug by slippage, not a trade. Below the floor a row still shows its basis but is offered no action, and every row displays its depth. The check runs against live liquidity as well as the committed snapshot, so drained depth removes the swap control without a redeploy.
+**Liquidity floor.** 1,028 xStocks exist; **21** clear $100k of liquidity and 983 sit under $1k. A week earlier the same count was 839 with the same 21 above the floor: issuance grew 23% and tradeable depth did not move at all. A swap control on a $200-depth token is a rug by slippage, not a trade. Below the floor a row still shows its basis but is offered no action, and every row displays its depth. The check runs against live liquidity as well as the committed snapshot, so drained depth removes the swap control without a redeploy.
 
 **The basis is two things, and only one is tradeable.** An xStock is a wrapper: the issuer publishes its own NAV, and the pool trades around that NAV. So a DEX-vs-equity gap is pool drift plus issuer tracking error added together, and a swap on this page can only capture the first.
 
@@ -59,7 +59,9 @@ GLD        -13      -287              0
 
 GOOGL's combined basis is -9 bps and looks like nothing. Split apart, the pool sits 46 bps under NAV while the issuer sits 38 over the share, and the halves nearly cancel. A single number would have hidden a real dislocation, not just overstated one. GLDx is the opposite case: the issuer tracked the share exactly while the pool sat 2.9% below it, so the whole gap was capturable.
 
-Measured across all fifteen, tracking error averages 18 bps while pool drift averages 38. The wrapper does its job; the pool is where the gap lives.
+Which half dominates depends on the session, and that turns out to be the point. During market hours pool drift carries the gap and tracking error is small (38 bps against 18 on one reading). With the market closed the split inverts: the "real share price" is a frozen last close while the issuer keeps marking, so on a pre-market reading tracking error ran 56 bps against 30 for pool drift, with rows like COIN showing -138 bps of it.
+
+Neither regime is tradeable the same way, and a single combined number cannot tell you which one you are looking at. The split can.
 
 **Fresh prices on both legs, which is harder than it sounds.** Jupiter's verified-token list is ~5MB, so it is cached for ten minutes; the equity leg refreshes every 45 seconds. Subtracting a ten-minute-old token price from a 45-second-old equity price produces a basis that measures cache lag rather than dislocation. It read convincingly: fifteen plausible rows, mean -69 bps, NFLX at -215 bps.
 
