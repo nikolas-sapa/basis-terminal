@@ -21,7 +21,8 @@ That constraint is enforced in code, not by convention. A guard test asserts tha
 | Source | What it provides | Keyless |
 |---|---|---|
 | Jupiter | On-chain token price, liquidity, verified mint | Yes |
-| Yahoo Finance | Underlying equity price | Yes |
+| Finnhub | Primary underlying equity price and market session | Requires API key |
+| Yahoo Finance | Fallback underlying equity price | Yes |
 | PreStocks | Pre-IPO mark and traded price, 8 companies | Yes |
 | Pyth | Underlying equity price for TSLA and QQQ | Requires entitled key |
 
@@ -84,17 +85,31 @@ npm install
 npm run dev
 ```
 
-Optional, for the Pyth-labeled rows:
+Use Node.js 22.18+ (or a newer supported release) for the native TypeScript
+test runner ([Node.js type-stripping documentation](https://nodejs.org/api/typescript.html)).
 
-```bash
-echo "PYTH_API_KEY=your_key" > .env.local
+Configure the primary equity provider in `.env.local`:
+
+```dotenv
+FINNHUB_API_KEY=your_key
+```
+
+Without it, the route uses the rate-limited Yahoo fallback. Optional, for
+the Pyth-labeled rows, add to the same file:
+
+```dotenv
+PYTH_API_KEY=your_key
 ```
 
 Tests use the Node standard library. No test framework is installed.
 
 ```bash
-node --test "lib/**/*.test.ts"
+npm test
 ```
+
+This runs library tests, API route tests, and the Tier 2 honesty guards.
+Run `npm run lint` and `npm run typecheck` for lint and type checks. The
+type check generates Next.js route types first, so it also works in a fresh checkout.
 
 ## Notes
 
