@@ -565,7 +565,7 @@ export async function GET() {
   // basis subtracts a 45-second-old equity price from a token price up to ten
   // minutes old, which measures cache lag, not dislocation.
   const priced = await jupiterPrices();
-  const { index: jupFresh, missed } = overlayPrices(jup, priced.prices);
+  const { index: jupFresh } = overlayPrices(jup, priced.prices);
   jup = jupFresh;
 
   const [finn, status] = await Promise.all([refreshFinnhub(nowSec), marketStatus()]);

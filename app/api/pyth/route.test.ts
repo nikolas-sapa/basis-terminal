@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { register } from "node:module";
+import type { Pair } from "../../../lib/pairs.ts";
 
 // ponytail: bare `node --test` cannot resolve two specifiers this route uses.
 // "next/server" is behind a package export condition Node does not pick, and
@@ -28,7 +29,14 @@ const ROUTE = new URL("./route.ts", import.meta.url).href;
 const realFetch = globalThis.fetch;
 let counter = 0;
 
-type Result = { status: number; body: any };
+type Body = {
+  pairs: Pair[];
+  sources: { pyth: boolean };
+  unresolved: string[];
+  fetchedAt: string;
+  error?: string;
+};
+type Result = { status: number; body: Body };
 
 /**
  * Load a FRESH copy of the route (cache-busting query) with `key` in env and
@@ -76,7 +84,7 @@ const priced = (t = now() - 5) => ({
 });
 
 const split = (feeds: unknown, updates: unknown) =>
-  (async (u: any) =>
+  (async (u: Parameters<typeof fetch>[0]) =>
     String(u).includes("/v2/price_feeds") ? res(feeds) : res(updates)) as unknown as typeof fetch;
 
 test("happy path: 200, sources.pyth true, non-zero bps, boolean marketOpen", async () => {
@@ -100,14 +108,14 @@ test("missing key: 503 unconditionally, and no fetch is ever attempted", async (
   assert.equal(status, 503);
   assert.equal(body.pairs.length, 0);
   assert.equal(body.sources.pyth, false);
-  assert.match(body.error, /PYTH_API_KEY is not set/);
+  assert.match(body.error ?? "", /PYTH_API_KEY is not set/);
   assert.equal(called, false, "route hit the network without a key");
 });
 
 test("empty-string key is treated as missing: 503", async () => {
   const { status, body } = await call(split(FEEDS, priced()), "");
   assert.equal(status, 503);
-  assert.match(body.error, /PYTH_API_KEY is not set/);
+  assert.match(body.error ?? "", /PYTH_API_KEY is not set/);
 });
 
 // A 200 carrying a JSON error object is how several APIs report rate limits.
@@ -118,19 +126,19 @@ test("price_feeds 200 + JSON error object: 502, not a 500 from the iteration", a
   const { status, body } = await call(f);
   assert.equal(status, 502);
   assert.equal(body.sources.pyth, false);
-  assert.match(body.error, /unexpected payload/);
+  assert.match(body.error ?? "", /unexpected payload/);
 });
 
 test("price_feeds non-ok: 502 carrying the upstream status", async () => {
   const f = (async () => new Response("unauthorized", { status: 401 })) as unknown as typeof fetch;
   const { status, body } = await call(f);
   assert.equal(status, 502);
-  assert.match(body.error, /401/);
+  assert.match(body.error ?? "", /401/);
 });
 
 // The real shape Hermes returns for an unentitled feed.
 test("403 entitlement response: 502 naming the feed", async () => {
-  const f = (async (u: any) =>
+  const f = (async (u: Parameters<typeof fetch>[0]) =>
     String(u).includes("/v2/price_feeds")
       ? res(FEEDS)
       : new Response(
@@ -140,7 +148,7 @@ test("403 entitlement response: 502 naming the feed", async () => {
   const { status, body } = await call(f);
   assert.equal(status, 502);
   assert.equal(body.sources.pyth, false);
-  assert.match(body.error, /Not entitled/);
+  assert.match(body.error ?? "", /Not entitled/);
 });
 
 test("fetch itself throwing: 502, never an unhandled rejection", async () => {
@@ -156,19 +164,19 @@ test("200 with an unparseable body: 502", async () => {
   const f = (async () => res("<html>maintenance</html>")) as unknown as typeof fetch;
   const { status, body } = await call(f);
   assert.equal(status, 502);
-  assert.match(body.error, /malformed JSON/);
+  assert.match(body.error ?? "", /malformed JSON/);
 });
 
 test("updates response with no parsed[]: 502, not an empty 200", async () => {
   const { status, body } = await call(split(FEEDS, { binary: { encoding: "hex", data: [] } }));
   assert.equal(status, 502);
   assert.equal(body.sources.pyth, false);
-  assert.match(body.error, /no parsed prices/);
+  assert.match(body.error ?? "", /no parsed prices/);
 });
 
 test("no symbol resolves: 502, and the price endpoint is never hit", async () => {
   let priceCalls = 0;
-  const f = (async (u: any) => {
+  const f = (async (u: Parameters<typeof fetch>[0]) => {
     if (!String(u).includes("/v2/price_feeds")) priceCalls++;
     return res([{ id: "c".repeat(64), attributes: { symbol: "Crypto.DOGE/USD" } }]);
   }) as unknown as typeof fetch;
