@@ -103,6 +103,7 @@ export function BasisTable() {
           // clock is the one lie this table must never tell, and an empty table
           // with no banner is the other. So: no rows, and a loud reason.
           setRows([]);
+          setSwap(null);
           setError(
             feed?.error
               ? `/api/basis returned ${res.status}. ${feed.error}`
@@ -112,12 +113,19 @@ export function BasisTable() {
         }
 
         setError(null);
-        setRows(feed?.pairs ?? []);
-        if ((feed?.pairs ?? []).length > 0) setLastGoodAt(feed?.fetchedAt ?? null);
+        const nextRows = feed?.pairs ?? [];
+        setRows(nextRows);
+        setSwap((current) =>
+          current && nextRows.some((p) =>
+            p.mint === current.mint && p.sym === current.sym && p.tradeable === true,
+          ) ? current : null,
+        );
+        if (nextRows.length > 0) setLastGoodAt(feed?.fetchedAt ?? null);
       } catch (err) {
         if (cancelled) return;
         setLoading(false);
         setRows([]);
+        setSwap(null);
         setError(
           `Could not reach /api/basis: ${err instanceof Error ? err.message : String(err)}`,
         );

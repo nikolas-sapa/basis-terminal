@@ -13,6 +13,8 @@ const KEY = process.env.PYTH_API_KEY;
 // 30 ids at ~72 chars each would put the query string past 2KB, which some
 // edges truncate. 20 per request keeps it near 1.5KB.
 const BATCH = 20;
+// One budget for metadata, every price batch and their response bodies.
+const REFRESH_TIMEOUT_MS = 20_000;
 
 // Feed ids are stable; the metadata payload is ~1MB. Refetching it on every
 // 10s poll is pure waste, so memoise it per server instance.
@@ -30,6 +32,9 @@ type Body = {
   error?: string;
 };
 
+type RefreshResult = { readonly body: Readonly<Body>; readonly status: number };
+let refreshing: Promise<RefreshResult> | null = null;
+
 // ponytail: an explicit field, not a `readonly status` parameter property.
 // Parameter properties are real TS syntax that Node's strip-only mode rejects,
 // which would make this module unloadable by `node --test`.
@@ -41,21 +46,25 @@ class UpstreamError extends Error {
   }
 }
 
-const fail = (body: Omit<Body, "sources" | "fetchedAt"> & { error: string }, status: number) =>
-  NextResponse.json<Body>(
-    // ponytail: `sources.pyth` is false on every failure path. An empty `pairs`
-    // with HTTP 200 is the worst outcome available here: the UI renders a clean
-    // empty table and a dead upstream looks like a quiet market.
-    { ...body, sources: { pyth: false }, fetchedAt: new Date().toISOString() },
-    { status },
-  );
+const fail = (
+  body: Omit<Body, "sources" | "fetchedAt"> & { error: string },
+  status: number,
+): RefreshResult => ({
+  // ponytail: `sources.pyth` is false on every failure path. An empty `pairs`
+  // with HTTP 200 is the worst outcome available here: the UI renders a clean
+  // empty table and a dead upstream looks like a quiet market.
+  body: { ...body, sources: { pyth: false }, fetchedAt: new Date().toISOString() },
+  status,
+});
 
-async function getJson(url: string, what: string) {
+async function getJson(url: string, what: string, signal: AbortSignal) {
   let r: Response;
   try {
+    signal.throwIfAborted();
     r = await fetch(url, {
       cache: "no-store",
       headers: KEY ? { Authorization: `Bearer ${KEY}` } : {},
+      signal,
     });
   } catch (e) {
     // Never swallow: a DNS/TLS/timeout failure is otherwise invisible.
@@ -78,10 +87,10 @@ async function getJson(url: string, what: string) {
   }
 }
 
-async function feedIdsBySymbol(): Promise<Map<string, string>> {
+async function feedIdsBySymbol(signal: AbortSignal): Promise<Map<string, string>> {
   if (feedCache && Date.now() - feedCache.at < FEEDS_TTL_MS) return feedCache.bySymbol;
 
-  const feeds = await getJson(`${HERMES}/v2/price_feeds`, "price_feeds");
+  const feeds = await getJson(`${HERMES}/v2/price_feeds`, "price_feeds", signal);
 
   // ponytail: a 200 carrying a JSON error object is how several APIs report
   // rate limits. `.json()` resolves, a bare `.catch` never fires, and the
@@ -108,7 +117,7 @@ async function feedIdsBySymbol(): Promise<Map<string, string>> {
   return bySymbol;
 }
 
-async function latest(ids: string[]): Promise<ParsedPriceUpdate[]> {
+async function latest(ids: string[], signal: AbortSignal): Promise<ParsedPriceUpdate[]> {
   const out: ParsedPriceUpdate[] = [];
   for (let i = 0; i < ids.length; i += BATCH) {
     const qs = new URLSearchParams();
@@ -116,7 +125,7 @@ async function latest(ids: string[]): Promise<ParsedPriceUpdate[]> {
     // Without this a single id Hermes no longer knows 404s the whole batch.
     qs.set("ignore_invalid_price_ids", "true");
 
-    const res = await getJson(`${HERMES}/v2/updates/price/latest?${qs}`, "updates/price/latest");
+    const res = await getJson(`${HERMES}/v2/updates/price/latest?${qs}`, "updates/price/latest", signal);
 
     if (!Array.isArray(res?.parsed)) {
       console.error(
@@ -130,7 +139,7 @@ async function latest(ids: string[]): Promise<ParsedPriceUpdate[]> {
   return out;
 }
 
-export async function GET() {
+async function refresh(): Promise<RefreshResult> {
   if (!KEY) {
     // Fail loud. An empty `pairs` array would render as a blank table and read
     // as "no basis today" rather than "the data source is unconfigured".
@@ -141,7 +150,8 @@ export async function GET() {
   }
 
   try {
-    const bySymbol = await feedIdsBySymbol();
+    const signal = AbortSignal.timeout(REFRESH_TIMEOUT_MS);
+    const bySymbol = await feedIdsBySymbol(signal);
 
     const wanted: Wanted[] = [];
     const unresolved: string[] = [];
@@ -156,7 +166,7 @@ export async function GET() {
       console.error(`[/api/pyth] no Pyth feed for: ${unresolved.join(", ")}`);
     }
 
-    const parsed = await latest(wanted.flatMap((w) => [w.underId, w.tokenId]));
+    const parsed = await latest(wanted.flatMap((w) => [w.underId, w.tokenId]), signal);
     const pairs = buildPairs(wanted, parsed, Math.floor(Date.now() / 1000));
 
     // ponytail: an empty `pairs` never gets a 200. Two real paths reach here
@@ -170,15 +180,18 @@ export async function GET() {
       return fail({ pairs: [], unresolved, error: msg }, 502);
     }
 
-    return NextResponse.json<Body>({
-      pairs,
-      // True only when Hermes actually handed back price updates. Reported
-      // separately from `pairs.length` so "upstream answered but the legs did
-      // not line up" stays distinguishable from "upstream is dead".
-      sources: { pyth: parsed.length > 0 },
-      unresolved,
-      fetchedAt: new Date().toISOString(),
-    });
+    return {
+      status: 200,
+      body: {
+        pairs,
+        // True only when Hermes actually handed back price updates. Reported
+        // separately from `pairs.length` so "upstream answered but the legs did
+        // not line up" stays distinguishable from "upstream is dead".
+        sources: { pyth: parsed.length > 0 },
+        unresolved,
+        fetchedAt: new Date().toISOString(),
+      },
+    };
   } catch (e) {
     const operational = e instanceof UpstreamError;
     // Operational paths already logged their specifics in getJson; this logs
@@ -193,4 +206,14 @@ export async function GET() {
       operational ? (e as UpstreamError).status : 500,
     );
   }
+}
+
+export async function GET() {
+  // Share only pending work, never a settled price result or a response stream.
+  // Clearing after failures also lets the next poll recover immediately.
+  refreshing ??= refresh().finally(() => {
+    refreshing = null;
+  });
+  const { body, status } = await refreshing;
+  return NextResponse.json<Body>(body, { status });
 }
