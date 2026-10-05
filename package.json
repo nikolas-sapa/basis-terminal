@@ -6,10 +6,12 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "test": "node --test \"lib/**/*.test.ts\" \"app/**/*.test.ts\"",
+    "typecheck": "next typegen && tsc --noEmit",
     "lint": "eslint"
   },
   "dependencies": {
-    "next": "16.3.5",
+    "next": "16.3.6",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
@@ -18,7 +20,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.3.5",
+    "eslint-config-next": "16.3.6",
     "typescript": "^5"
   }
 }

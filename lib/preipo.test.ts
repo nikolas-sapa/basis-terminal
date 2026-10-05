@@ -51,7 +51,50 @@ test("normalize strips the PreStocks suffix and carries the real mint", () => {
   assert.equal(r2(oa.premiumPct), 1.53);
 });
 
+const invalidRows: [string, unknown][] = [
+  ["null", null],
+  ["primitive", "SpaceX"],
+  ["missing name", { ...PS[0], name: undefined }],
+  ["numeric name", { ...PS[0], name: 7 }],
+  ["blank name", { ...PS[0], name: "  " }],
+  ["missing symbol", { ...PS[0], symbol: undefined }],
+  ["blank symbol", { ...PS[0], symbol: "  " }],
+  ["missing mint", { ...PS[0], contract_address: undefined }],
+  ["blank mint", { ...PS[0], contract_address: "  " }],
+  ["zero reference", { ...PS[0], markPrice: 0 }],
+  ["negative reference", { ...PS[0], markPrice: -1 }],
+  ["NaN reference", { ...PS[0], markPrice: NaN }],
+  ["infinite reference", { ...PS[0], markPrice: Infinity }],
+  ["NaN token", { ...PS[0], tokenPrice: NaN }],
+  ["infinite token", { ...PS[0], tokenPrice: Infinity }],
+  ["negative token", { ...PS[0], tokenPrice: -1 }],
+  ["premium overflow", { ...PS[0], markPrice: Number.MIN_VALUE, tokenPrice: Number.MAX_VALUE }],
+  ["empty normalized company", { ...PS[0], name: " PreStocks" }],
+];
+
+for (const [name, row] of invalidRows) {
+  test(`normalize rejects ${name}`, () => {
+    assert.throws(() => normalizePreStocks([row]));
+  });
+}
+
+test("normalize rejects a malformed batch atomically", () => {
+  assert.throws(() => normalizePreStocks([PS[0], { ...PS[1], markPrice: 0 }]));
+});
+
+test("normalize preserves a zero token discount and an empty valid array", () => {
+  assert.equal(normalizePreStocks([{ ...PS[0], tokenPrice: 0 }])[0].premiumPct, -100);
+  assert.deepEqual(normalizePreStocks([]), []);
+});
+
+test("normalize validates only consumed fields", () => {
+  const { name, symbol, contract_address, markPrice, tokenPrice } = PS[0];
+  assert.deepEqual(
+    normalizePreStocks([{ name, symbol, contract_address, markPrice, tokenPrice }]),
+    normalizePreStocks([PS[0]]),
+  );
+});
+
 // T6 is enforced structurally, not by convention: if this key set ever grows a
 // price or a mint, a later UI task could wire a swap button onto a pair of
 // tokens that are not convertible into one another. Freeze the shape.
-

@@ -21,18 +21,40 @@ export type PreIpoRow = {
   venue: "prestocks";
 };
 
-const company = (r: PreStocksRaw) => r.name.replace(/ PreStocks$/, "");
-
-export function normalizePreStocks(raw: PreStocksRaw[]): PreIpoRow[] {
-  return raw.map((r) => ({
-    company: company(r),
-    symbol: r.symbol,
-    markPx: r.markPrice,
-    tokenPx: r.tokenPrice,
-    premiumPct: premium(r.tokenPrice, r.markPrice),
-    mint: r.contract_address,
-    venue: "prestocks" as const,
-  }));
+export function normalizePreStocks(raw: unknown): PreIpoRow[] {
+  if (!Array.isArray(raw)) throw new Error("PreStocks response must be an array");
+  return raw.map((entry: unknown, index) => {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      throw new Error(`PreStocks row ${index} must be an object`);
+    }
+    const r = entry as Record<string, unknown>;
+    if (
+      typeof r.name !== "string" || !r.name.trim() ||
+      typeof r.symbol !== "string" || !r.symbol.trim() ||
+      typeof r.contract_address !== "string" || !r.contract_address.trim()
+    ) {
+      throw new Error(`PreStocks row ${index} needs a name, symbol and mint`);
+    }
+    const company = r.name.replace(/ PreStocks$/, "");
+    if (!company.trim()) throw new Error(`PreStocks row ${index} has an empty company`);
+    if (
+      typeof r.markPrice !== "number" || !Number.isFinite(r.markPrice) || r.markPrice <= 0 ||
+      typeof r.tokenPrice !== "number" || !Number.isFinite(r.tokenPrice) || r.tokenPrice < 0
+    ) {
+      throw new Error(`PreStocks row ${index} has invalid reference or token prices`);
+    }
+    const premiumPct = premium(r.tokenPrice, r.markPrice);
+    if (!Number.isFinite(premiumPct)) throw new Error(`PreStocks row ${index} has a non-finite premium`);
+    return {
+      company,
+      symbol: r.symbol,
+      markPx: r.markPrice,
+      tokenPx: r.tokenPrice,
+      premiumPct,
+      mint: r.contract_address,
+      venue: "prestocks" as const,
+    };
+  });
 }
 
 // ponytail: valuation-only comparison. Raw prices are NOT comparable across

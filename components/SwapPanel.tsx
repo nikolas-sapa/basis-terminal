@@ -58,6 +58,7 @@ declare global {
 }
 
 let loader: Promise<JupiterGlobal> | null = null;
+let failedLoads = 0;
 
 /** Inject the shell once per document and resolve when `window.Jupiter` lands. */
 function loadPlugin(): Promise<JupiterGlobal> {
@@ -70,34 +71,57 @@ function loadPlugin(): Promise<JupiterGlobal> {
   const pending = new Promise<JupiterGlobal>((resolve, reject) => {
     const existing = document.getElementById(SCRIPT_ID) as HTMLScriptElement | null;
     const el = existing ?? document.createElement("script");
+    let settled = false;
+    const cleanup = () => {
+      clearTimeout(timer);
+      el.removeEventListener("load", onLoad);
+      el.removeEventListener("error", onError);
+    };
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      failedLoads++;
+      cleanup();
+      // A failed element never emits a fresh load event. Remove it so a later
+      // open creates a new request, rather than waiting on that dead element.
+      el.remove();
+      reject(error);
+    };
+    const onLoad = () => {
+      if (settled) return;
+      if (!window.Jupiter) {
+        fail(new Error(`${PLUGIN_SRC} loaded but defined no window.Jupiter`));
+        return;
+      }
+      settled = true;
+      cleanup();
+      resolve(window.Jupiter);
+    };
+    const onError = () => fail(new Error(`${PLUGIN_SRC} could not be fetched`));
     // A CDN that hangs rather than erroring would otherwise leave the panel
     // saying "loading" for ever, which reads as our bug and hides theirs.
     const timer = setTimeout(
-      () => reject(new Error(`${PLUGIN_SRC} did not load within ${LOAD_TIMEOUT_MS / 1000}s`)),
+      () => fail(new Error(`${PLUGIN_SRC} did not load within ${LOAD_TIMEOUT_MS / 1000}s`)),
       LOAD_TIMEOUT_MS,
     );
-    el.addEventListener("load", () => {
-      clearTimeout(timer);
-      if (window.Jupiter) resolve(window.Jupiter);
-      else reject(new Error(`${PLUGIN_SRC} loaded but defined no window.Jupiter`));
-    });
-    el.addEventListener("error", () => {
-      clearTimeout(timer);
-      reject(new Error(`${PLUGIN_SRC} could not be fetched`));
-    });
+    el.addEventListener("load", onLoad);
+    el.addEventListener("error", onError);
     if (!existing) {
       el.id = SCRIPT_ID;
-      el.src = PLUGIN_SRC;
+      // A timed-out request may still be pending in the browser. Give each
+      // retry its own URL so it cannot coalesce with that stalled transport.
+      el.src = failedLoads === 0 ? PLUGIN_SRC : `${PLUGIN_SRC}?basis_retry=${failedLoads}`;
       el.async = true;
       document.head.append(el);
     }
   });
 
   // Let a later open retry after a failed load instead of latching the failure.
-  loader = pending.catch((e) => {
-    loader = null;
+  const shared = pending.catch((e: unknown) => {
+    if (loader === shared) loader = null;
     throw e;
   });
+  loader = shared;
   return loader;
 }
 
@@ -188,8 +212,8 @@ export function SwapPanel({ target, onClose }: { target: SwapTarget; onClose: ()
           </div>
           <p className={styles.swapSub}>
             {target.cheap
-              ? `${target.tokenSym} trades below ${target.sym}, so closing the basis means USDC in and ${target.tokenSym} out.`
-              : `${target.tokenSym} trades above ${target.sym}, so closing the basis means ${target.tokenSym} in and USDC out.`}{" "}
+              ? `Selected trade: USDC in and ${target.tokenSym} out.`
+              : `Selected trade: ${target.tokenSym} in and USDC out.`}{" "}
             Wallet connection, quoting, slippage and signing all happen inside Jupiter&apos;s
             own widget. This app never sees a key and never builds a transaction. The basis
             above is not a promise of profit: it can widen, and the underlying does not trade
